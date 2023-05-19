@@ -286,9 +286,15 @@ static ssize_t xone_dongle_pairing_store(struct device *dev,
 	if (err)
 		return err;
 
+	err = pm_runtime_resume_and_get(dev);
+	if (err)
+		return err;
+
 	err = xone_dongle_toggle_pairing(dongle, enable);
 	if (err)
 		return err;
+
+	pm_runtime_put(dev);
 
 	return count;
 }

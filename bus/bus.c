@@ -116,8 +116,6 @@ static void gip_bus_remove(struct device *dev)
 static void gip_bus_remove_compat(struct device *dev)
 {
 	gip_bus_remove(dev);
-
-	return;
 }
 #endif
 

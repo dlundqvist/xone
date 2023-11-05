@@ -112,7 +112,14 @@ static void gip_bus_remove(struct device *dev)
 	up(&client->drv_lock);
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5, 13, 0)
+static int gip_bus_remove_compat(struct device *dev)
+{
+	gip_bus_remove(dev);
+
+	return 0;
+}
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 static void gip_bus_remove_compat(struct device *dev)
 {
 	gip_bus_remove(dev);

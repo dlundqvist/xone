@@ -67,8 +67,6 @@ struct gip_headset {
 		snd_pcm_uframes_t pointer;
 		snd_pcm_uframes_t period;
 	} playback, capture;
-
-	struct snd_card *card;
 };
 
 static int gip_headset_pcm_open(struct snd_pcm_substream *sub)
@@ -296,8 +294,8 @@ static int gip_headset_init_pcm(struct gip_headset *headset)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_card_new(&headset->client->dev, SNDRV_DEFAULT_IDX1,
-			   SNDRV_DEFAULT_STR1, THIS_MODULE, 0, &card);
+	err = snd_devm_card_new(&headset->client->dev, SNDRV_DEFAULT_IDX1,
+				SNDRV_DEFAULT_STR1, THIS_MODULE, 0, &card);
 	if (err)
 		return err;
 
@@ -305,8 +303,6 @@ static int gip_headset_init_pcm(struct gip_headset *headset)
 	strscpy(card->shortname, GIP_HS_NAME, sizeof(card->shortname));
 	snprintf(card->longname, sizeof(card->longname), "%s at %s",
 		 GIP_HS_NAME, dev_name(&headset->client->dev));
-
-	headset->card = card;
 
 	err = snd_pcm_new(card, GIP_HS_NAME, 0, 1, 1, &pcm);
 	if (err)
@@ -403,7 +399,7 @@ static void gip_headset_register(struct work_struct *work)
 		return;
 
 	dev_dbg(&client->dev, "%s: init pcm device.\n", __func__);
-	err = gip_headset_init_pcm(headset);
+	err = snd_card_free_on_error(&client->dev, gip_headset_init_pcm(headset));
 	if (err) {
 		dev_err(&client->dev, "%s: init PCM failed: %d\n",
 			__func__, err);
@@ -577,11 +573,6 @@ static void gip_headset_remove(struct gip_client *client)
 	hrtimer_cancel(&headset->timer);
 	hrtimer_cancel(&headset->start_audio_timer);
 	gip_disable_audio(client);
-
-	if (headset->card) {
-		snd_card_disconnect(headset->card);
-		snd_card_free_when_closed(headset->card);
-	}
 }
 
 static struct gip_driver gip_headset_driver = {

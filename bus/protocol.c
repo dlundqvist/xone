@@ -1420,6 +1420,22 @@ static int gip_handle_pkt_audio_samples(struct gip_client *client,
 	return err;
 }
 
+static int gip_handle_pkt_firmware(struct gip_client *client,
+                void *data, u32 len)
+{
+    int err = 0;
+
+    if (down_trylock(&client->drv_lock))
+        return -EBUSY;
+
+    if (client->drv && client->drv->ops.firmware)
+        err = client->drv->ops.firmware(client, data, len);
+
+    up(&client->drv_lock);
+
+    return err;
+}
+
 static int gip_dispatch_pkt(struct gip_client *client,
 			    struct gip_header *hdr, void *data, u32 len)
 {
@@ -1443,6 +1459,8 @@ static int gip_dispatch_pkt(struct gip_client *client,
 			return gip_handle_pkt_hid_report(client, data, len);
 		case GIP_CMD_AUDIO_SAMPLES:
 			return gip_handle_pkt_audio_samples(client, data, len);
+        case GIP_CMD_FIRMWARE:
+            return gip_handle_pkt_firmware(client, data, len);
 		default:
 			return 0;
 		}

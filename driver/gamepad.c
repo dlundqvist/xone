@@ -19,7 +19,8 @@
 // Various versions of the Elite Series 2 firmware have changed the way paddle
 // states are sent. Paddle support is only reported up to this firmware
 // version.
-#define GIP_ELITE_SERIES_2_MAX_FIRMWARE 0x04FF
+#define GIP_ELITE_SERIES_2_4X_FIRMWARE 0x04FF
+#define GIP_ELITE_SERIES_2_510_FIRMWARE 0x050A
 
 #define GIP_GP_RUMBLE_DELAY msecs_to_jiffies(10)
 #define GIP_GP_RUMBLE_MAX 100
@@ -66,6 +67,15 @@ enum gip_gamepad_motor {
 	GIP_GP_MOTOR_LT = BIT(3),
 };
 
+struct gip_gamepad_pkt_firmware {
+    // Remember, xpad keeps the 4 bytes.
+    // Paddles are at [18] in xpad, so, [14] here.
+    // Pad 13 bytes.
+    u8 unknown[13];
+    u8 paddles;
+    u8 profile;
+} __packed;
+
 struct gip_gamepad_pkt_input {
 	__le16 buttons;
 	__le16 trigger_left;
@@ -96,8 +106,9 @@ struct gip_gamepad_pkt_rumble {
 typedef enum {
 	PADDLE_NONE,
 	PADDLE_ELITE,
-	PADDLE_ELITE2_OLDFW,
-	PADDLE_ELITE2 //Not yet implemented, need a tester
+	PADDLE_ELITE2_4X, // Still in the same packet
+	PADDLE_ELITE2_510, // Same packet, different location
+    PADDLE_ELITE2_511 // Different packet entirely.
 } PaddleCapability;
 
 struct gip_gamepad {
@@ -197,15 +208,21 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 		if(hardware.product == GIP_PRODUCT_ELITE) {
 			gamepad->paddle_support = PADDLE_ELITE;
 		}
-		else if(hardware.product == GIP_PRODUCT_ELITE_SERIES_2 && hardware.version <= GIP_ELITE_SERIES_2_MAX_FIRMWARE) {
-			gamepad->paddle_support = PADDLE_ELITE2_OLDFW;
-		}
+        else if (hardware.product == GIP_PRODUCT_ELITE_SERIES_2)
+        {
+            if (hardware.version <= GIP_ELITE_SERIES_2_4X_FIRMWARE)
+                gamepad->paddle_support = PADDLE_ELITE2_4X;
+            else if (hardware.version <= GIP_ELITE_SERIES_2_510_FIRMWARE)
+                gamepad->paddle_support = PADDLE_ELITE2_510;
+            else if (hardware.version > GIP_ELITE_SERIES_2_510_FIRMWARE) // If new revisions come, this should become LTE new max
+                gamepad->paddle_support = PADDLE_ELITE2_511;
+        }
 	}
 
 	if (gamepad->supports_share)
 		input_set_capability(dev, EV_KEY, KEY_RECORD);
 
-	if ((gamepad->paddle_support ==  PADDLE_ELITE) || (gamepad->paddle_support == PADDLE_ELITE2_OLDFW)) {
+	if ((gamepad->paddle_support ==  PADDLE_ELITE) || (gamepad->paddle_support == PADDLE_ELITE2_4X) || (gamepad->paddle_support == PADDLE_ELITE2_510) || (gamepad->paddle_support == PADDLE_ELITE2_511)) {
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY5);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY6);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY7);
@@ -286,6 +303,32 @@ static int gip_gamepad_op_guide_button(struct gip_client *client, bool down)
 	return 0;
 }
 
+static int gip_gamepad_op_firmware(struct gip_client *client, void *data, u32 len)
+{
+    // First, ensure the data is of the correct size.
+    // This will probably footgun us later.
+    struct gip_gamepad_pkt_firmware *pkt = data;
+    if (len < sizeof (*pkt))
+        return -EINVAL;
+
+    // Grab our controller
+    struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
+    struct input_dev *dev = gamepad->input.dev;
+
+    // mimic xpad behavior of ignoring if a profile is set
+    if (pkt->profile == 0)
+    {
+        input_report_key(dev, BTN_TRIGGER_HAPPY5, pkt->paddles & GIP_GP_BTN_P1);
+        input_report_key(dev, BTN_TRIGGER_HAPPY6, pkt->paddles & GIP_GP_BTN_P2);
+        input_report_key(dev, BTN_TRIGGER_HAPPY7, pkt->paddles & GIP_GP_BTN_P3);
+        input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
+    }
+
+    input_sync(dev);
+
+    return 0;
+}
+
 static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 {
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
@@ -323,10 +366,29 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 	input_report_key(dev, BTN_THUMBR, buttons & GIP_GP_BTN_STICK_R);
 
 
-	//For anyone comparing to xpad's paddle handling source, xone strips four bytes of header off of the beginning that xpad doesn't, so all offsets are 4 less
-	if ((gamepad->paddle_support == PADDLE_ELITE2_OLDFW) && (len > 14)) {
-		// On the Elite Series 2 with older firmware paddles are stored at byte 14
+	// For anyone comparing to xpad's paddle handling source,
+    // xone strips four bytes of header off of the beginning that xpad doesn't, so all offsets are 4 less
+    // later revisions put paddle support in the firmware packet, check gip_gamepad_op_WTFEVER
+    if ((gamepad->paddle_support == PADDLE_ELITE2_510) && (len > 18)) { // Assume the controller might not send profile data.
+        // On the Elite Series 2 with newer-ISH firmware (<=5.10) paddles are stored at byte 18 (22)
+        u8 paddles = ((u8 *) data)[18];
+
+        // But first, ensure a profile is not applied, like xpad.
+        if ((len > 19) && ((u8 *) data)[19] != 0)
+            paddles = 0;
+
+        input_report_key(dev, BTN_TRIGGER_HAPPY5, paddles & GIP_GP_BTN_P1);
+        input_report_key(dev, BTN_TRIGGER_HAPPY6, paddles & GIP_GP_BTN_P2);
+        input_report_key(dev, BTN_TRIGGER_HAPPY7, paddles & GIP_GP_BTN_P3);
+        input_report_key(dev, BTN_TRIGGER_HAPPY8, paddles & GIP_GP_BTN_P4);
+    } else if ((gamepad->paddle_support == PADDLE_ELITE2_4X) && (len > 14)) {
+		// On the Elite Series 2 with older firmware (<5.11) paddles are stored at byte 14 (18)
 		u8 paddles = ((u8 *) data)[14];
+
+        // But first, ensure a profile is not applied, like xpad.
+        if ((len > 15) && ((u8 *) data)[15] != 0)
+            paddles = 0;
+
 		input_report_key(dev, BTN_TRIGGER_HAPPY5, paddles & GIP_GP_BTN_P1);
 		input_report_key(dev, BTN_TRIGGER_HAPPY6, paddles & GIP_GP_BTN_P2);
 		input_report_key(dev, BTN_TRIGGER_HAPPY7, paddles & GIP_GP_BTN_P3);
@@ -414,6 +476,7 @@ static struct gip_driver gip_gamepad_driver = {
 		.authenticate = gip_gamepad_op_authenticate,
 		.guide_button = gip_gamepad_op_guide_button,
 		.input = gip_gamepad_op_input,
+        .firmware = gip_gamepad_op_firmware,
 	},
 	.probe = gip_gamepad_probe,
 	.remove = gip_gamepad_remove,

@@ -709,6 +709,21 @@ int gip_init_audio_out(struct gip_client *client)
 }
 EXPORT_SYMBOL_GPL(gip_init_audio_out);
 
+int gip_init_extra_data(struct gip_client *client)
+{
+struct gip_header hdr = {};
+
+	hdr.command = 0x4d; // ???
+	hdr.options |= GIP_OPT_ACKNOWLEDGE; // Because 4
+	hdr.sequence = 1;
+	hdr.packet_length = 2;
+
+	u8 packet_data[] = {0x07, 0x00};
+
+	return gip_send_pkt(client, &hdr, &packet_data);
+}
+EXPORT_SYMBOL_GPL(gip_init_extra_data);
+
 void gip_disable_audio(struct gip_client *client)
 {
 	struct gip_adapter *adap = client->adapter;

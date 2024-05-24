@@ -201,6 +201,11 @@ static int gip_gamepad_init_rumble(struct gip_gamepad *gamepad)
 	return input_ff_create_memless(dev, NULL, gip_gamepad_queue_rumble);
 }
 
+static int gip_gamepad_init_extra_data(struct gip_gamepad *gamepad)
+{
+	return gip_init_extra_data(gamepad->client);
+}
+
 static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 {
 	struct input_dev *dev = gamepad->input.dev;
@@ -339,7 +344,7 @@ static int gip_gamepad_op_firmware(struct gip_client *client, void *data, u32 le
 	input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
     // }
 
-	gip_dbg(client, "%s: paddles: %d profile:", __func__, pkt->paddles, pkt->profile);
+	gip_dbg(client, "%s: paddles: %d profile: %d", __func__, pkt->paddles, pkt->profile);
 
     input_sync(dev);
 
@@ -462,6 +467,14 @@ static int gip_gamepad_probe(struct gip_client *client)
 		return err;
 
 	err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
+	if (err)
+		return err;
+
+	err = gip_gamepad_init_input(gamepad);
+	if (err)
+		return err;
+
+	err = gip_gamepad_init_extra_data(gamepad);
 	if (err)
 		return err;
 

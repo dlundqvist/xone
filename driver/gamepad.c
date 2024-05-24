@@ -40,7 +40,7 @@ static const guid_t gip_gamepad_guid_dli =
 
 enum gip_gamepad_button {
 	GIP_GP_BTN_MENU = BIT(2),
-	GIP_GP_BTN_VIEW = BIT(3),
+	GIP_GP_BTN_VIEW = BIT(3),		
 	GIP_GP_BTN_A = BIT(4),
 	GIP_GP_BTN_B = BIT(5),
 	GIP_GP_BTN_X = BIT(6),
@@ -194,6 +194,11 @@ static int gip_gamepad_init_rumble(struct gip_gamepad *gamepad)
 	return input_ff_create_memless(dev, NULL, gip_gamepad_queue_rumble);
 }
 
+static int gip_gamepad_init_extra_data(struct gip_gamepad *gamepad)
+{
+	return gip_init_extra_data(gamepad->client);
+}
+
 static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 {
 	struct input_dev *dev = gamepad->input.dev;
@@ -229,6 +234,17 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY6);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY7);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY8);
+
+		if (gamepad->paddle_support == PADDLE_ELITE2_511)
+		{
+			dev_dbg(&gamepad->client->dev, "%s: trying to init extra data", __func__);
+			err = gip_gamepad_init_extra_data(gamepad);
+			if (err) {
+				dev_err(&gamepad->client->dev, "%s: init extra data failed: %d\n",
+					__func__, err);
+				goto err_delete_timer;
+			}
+		}
 	}
 
 	input_set_capability(dev, EV_KEY, BTN_MODE);
@@ -326,7 +342,7 @@ static int gip_gamepad_op_firmware(struct gip_client *client, void *data, u32 le
 	input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
     // }
 
-	gip_dbg(client, "%s: paddles: %d profile:", __func__, pkt->paddles, pkt->profile);
+	gip_dbg(client, "%s: paddles: %d profile: %d", __func__, pkt->paddles, pkt->profile);
 
     input_sync(dev);
 

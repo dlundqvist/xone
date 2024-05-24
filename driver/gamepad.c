@@ -316,13 +316,13 @@ static int gip_gamepad_op_firmware(struct gip_client *client, void *data, u32 le
     struct input_dev *dev = gamepad->input.dev;
 
     // mimic xpad behavior of ignoring if a profile is set
-    if (pkt->profile == 0)
-    {
-        input_report_key(dev, BTN_TRIGGER_HAPPY5, pkt->paddles & GIP_GP_BTN_P1);
-        input_report_key(dev, BTN_TRIGGER_HAPPY6, pkt->paddles & GIP_GP_BTN_P2);
-        input_report_key(dev, BTN_TRIGGER_HAPPY7, pkt->paddles & GIP_GP_BTN_P3);
-        input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
-    }
+    // if (pkt->profile == 0 )
+	// {
+	input_report_key(dev, BTN_TRIGGER_HAPPY5, pkt->paddles & GIP_GP_BTN_P1);
+	input_report_key(dev, BTN_TRIGGER_HAPPY6, pkt->paddles & GIP_GP_BTN_P2);
+	input_report_key(dev, BTN_TRIGGER_HAPPY7, pkt->paddles & GIP_GP_BTN_P3);
+	input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
+    // }
 
     input_sync(dev);
 

@@ -1412,7 +1412,7 @@ static int gip_handle_pkt_firmware(struct gip_client *client,
         return -EBUSY;
 
     if (client->drv && client->drv->ops.firmware)
-        client->drv->ops.firmware(client, data, len);
+        err = client->drv->ops.firmware(client, data, len);
 
     up(&client->drv_lock);
 

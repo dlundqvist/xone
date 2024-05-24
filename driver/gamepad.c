@@ -28,6 +28,8 @@
 /* button offset from end of packet */
 #define GIP_GP_BTN_SHARE_OFFSET 18
 
+#define gip_dbg(client, ...) dev_dbg(&(client)->adapter->dev, __VA_ARGS__)
+
 static const guid_t gip_gamepad_guid_share =
 	GUID_INIT(0xecddd2fe, 0xd387, 0x4294,
 		  0xbd, 0x96, 0x1a, 0x71, 0x2e, 0x3d, 0xc7, 0x7d);
@@ -323,6 +325,8 @@ static int gip_gamepad_op_firmware(struct gip_client *client, void *data, u32 le
 	input_report_key(dev, BTN_TRIGGER_HAPPY7, pkt->paddles & GIP_GP_BTN_P3);
 	input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
     // }
+
+	gip_dbg(client, "%s: paddles: %d profile:", __func__, pkt->paddles, pkt->profile);
 
     input_sync(dev);
 

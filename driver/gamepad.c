@@ -234,17 +234,6 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY6);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY7);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY8);
-
-		if (gamepad->paddle_support == PADDLE_ELITE2_511)
-		{
-			dev_dbg(&gamepad->client->dev, "%s: trying to init extra data", __func__);
-			err = gip_gamepad_init_extra_data(gamepad);
-			if (err) {
-				dev_err(&gamepad->client->dev, "%s: init extra data failed: %d\n",
-					__func__, err);
-				goto err_delete_timer;
-			}
-		}
 	}
 
 	input_set_capability(dev, EV_KEY, BTN_MODE);
@@ -469,6 +458,10 @@ static int gip_gamepad_probe(struct gip_client *client)
 		return err;
 
 	err = gip_gamepad_init_input(gamepad);
+	if (err)
+		return err;
+
+	err = gip_gamepad_init_extra_data(gamepad);
 	if (err)
 		return err;
 

@@ -72,8 +72,8 @@ enum gip_gamepad_motor {
 struct gip_gamepad_pkt_firmware {
     // Remember, xpad keeps the 4 bytes.
     // Paddles are at [18] in xpad, so, [14] here.
-    // Pad 13 bytes.
-    u8 unknown[13];
+    // Pad 14 bytes.
+    u8 unknown[14];
     u8 paddles;
     u8 profile;
 } __packed;
@@ -224,12 +224,15 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 		}
         else if (hardware.product == GIP_PRODUCT_ELITE_SERIES_2)
         {
+			printk("Elite Series 2\n");
             if (hardware.version <= GIP_ELITE_SERIES_2_4X_FIRMWARE)
                 gamepad->paddle_support = PADDLE_ELITE2_4X;
             else if (hardware.version <= GIP_ELITE_SERIES_2_510_FIRMWARE)
                 gamepad->paddle_support = PADDLE_ELITE2_510;
-            else if (hardware.version > GIP_ELITE_SERIES_2_510_FIRMWARE) // If new revisions come, this should become LTE new max
+            else if (hardware.version > GIP_ELITE_SERIES_2_510_FIRMWARE){ // If new revisions come, this should become LTE new max
+				printk("Elite Series 2 > 5.10\n");
                 gamepad->paddle_support = PADDLE_ELITE2_511;
+			}
         }
 	}
 
@@ -335,16 +338,10 @@ static int gip_gamepad_op_firmware(struct gip_client *client, void *data, u32 le
     struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
     struct input_dev *dev = gamepad->input.dev;
 
-    // mimic xpad behavior of ignoring if a profile is set
-    // if (pkt->profile == 0 )
-	// {
 	input_report_key(dev, BTN_TRIGGER_HAPPY5, pkt->paddles & GIP_GP_BTN_P1);
 	input_report_key(dev, BTN_TRIGGER_HAPPY6, pkt->paddles & GIP_GP_BTN_P2);
 	input_report_key(dev, BTN_TRIGGER_HAPPY7, pkt->paddles & GIP_GP_BTN_P3);
 	input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
-    // }
-
-	gip_dbg(client, "%s: paddles: %d profile: %d", __func__, pkt->paddles, pkt->profile);
 
     input_sync(dev);
 
@@ -454,6 +451,10 @@ static int gip_gamepad_probe(struct gip_client *client)
 	if (err)
 		return err;
 
+	err = gip_gamepad_init_extra_data(gamepad);
+	if (err)
+		return err;
+
 	err = gip_init_battery(&gamepad->battery, client, GIP_GP_NAME);
 	if (err)
 		return err;
@@ -474,9 +475,7 @@ static int gip_gamepad_probe(struct gip_client *client)
 	if (err)
 		return err;
 
-	err = gip_gamepad_init_extra_data(gamepad);
-	if (err)
-		return err;
+
 
 	dev_set_drvdata(&client->dev, gamepad);
 

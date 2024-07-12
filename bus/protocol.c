@@ -711,7 +711,7 @@ EXPORT_SYMBOL_GPL(gip_init_audio_out);
 
 int gip_init_extra_data(struct gip_client *client)
 {
-struct gip_header hdr = {};
+	struct gip_header hdr = {};
 
 	hdr.command = 0x4d; // ???
 	hdr.options |= GIP_OPT_ACKNOWLEDGE; // Because 4
@@ -1474,8 +1474,6 @@ static int gip_dispatch_pkt(struct gip_client *client,
 			return gip_handle_pkt_hid_report(client, data, len);
 		case GIP_CMD_AUDIO_SAMPLES:
 			return gip_handle_pkt_audio_samples(client, data, len);
-        case GIP_CMD_FIRMWARE:
-            return gip_handle_pkt_firmware(client, data, len);
 		default:
 			return 0;
 		}
@@ -1484,6 +1482,8 @@ static int gip_dispatch_pkt(struct gip_client *client,
 	switch (hdr->command) {
 	case GIP_CMD_INPUT:
 		return gip_handle_pkt_input(client, data, len);
+	case GIP_CMD_FIRMWARE:
+		return gip_handle_pkt_firmware(client, data, len);
 	}
 
 	return 0;

@@ -565,6 +565,7 @@ static const struct usb_device_id xone_wired_id_table[] = {
 	{ XONE_WIRED_VENDOR(0x0b05) }, /* ASUS */
 	{ XONE_WIRED_VENDOR(0x413d) }, /* BIGBIG WON */
 	{ XONE_WIRED_VENDOR(0x046d) }, /* Logitech Astro */
+	{ XONE_WIRED_VENDOR(0x0079) }, /* EasySMX */
 	{ },
 };
 

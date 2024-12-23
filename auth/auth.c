@@ -160,8 +160,8 @@ struct gip_auth2_pkt_client_finish {
 } __packed;
 
 static int gip_auth_send_pkt(struct gip_auth *auth,
-					 enum gip_auth_command_handshake cmd,
-					 void *pkt, u16 len)
+			     enum gip_auth_command_handshake cmd,
+			     void *pkt, u16 len)
 {
 	struct gip_auth_header_full *hdr = pkt;
 	u16 data_len = len - sizeof(hdr->handshake) - GIP_AUTH_TRAILER_LEN;
@@ -178,7 +178,7 @@ static int gip_auth_send_pkt(struct gip_auth *auth,
 
 	auth->last_sent_command = cmd;
 	crypto_shash_update(auth->shash_transcript,
-					pkt + sizeof(hdr->handshake), data_len);
+			    pkt + sizeof(hdr->handshake), data_len);
 
 	return gip_send_authenticate(auth->client, pkt, len, true);
 }
@@ -209,7 +209,7 @@ static int gip_auth2_send_hello(struct gip_auth *auth)
 }
 
 static int gip_auth2_handle_pkt_hello(struct gip_auth *auth,
-							void *data, u32 len)
+				      void *data, u32 len)
 {
 	struct gip_auth2_pkt_client_hello *pkt = data;
 
@@ -219,11 +219,11 @@ static int gip_auth2_handle_pkt_hello(struct gip_auth *auth,
 	memcpy(auth->random_client, pkt->random, sizeof(auth->random_client));
 
 	return gip_auth_request_pkt(auth, GIP_AUTH2_CMD_CLIENT_CERTIFICATE,
-						sizeof(struct gip_auth2_pkt_client_cert));
+				    sizeof(struct gip_auth2_pkt_client_cert));
 }
 
 static int gip_auth2_handle_pkt_certificate(struct gip_auth *auth,
-							void *data, u32 len)
+					    void *data, u32 len)
 {
 	struct gip_auth2_pkt_client_cert *pkt = data;
 
@@ -237,11 +237,11 @@ static int gip_auth2_handle_pkt_certificate(struct gip_auth *auth,
 		(int)sizeof(pkt->revision), pkt->revision);
 
 	return gip_auth_request_pkt(auth, GIP_AUTH2_CMD_CLIENT_PUBKEY,
-						sizeof(struct gip_auth2_pkt_client_pubkey));
+				    sizeof(struct gip_auth2_pkt_client_pubkey));
 }
 
 static int gip_auth2_handle_pkt_pubkey(struct gip_auth *auth,
-							 void *data, u32 len)
+				       void *data, u32 len)
 {
 	struct gip_auth2_pkt_client_pubkey *pkt = data;
 
@@ -257,7 +257,7 @@ static int gip_auth2_handle_pkt_pubkey(struct gip_auth *auth,
 static void gip_auth2_exchange_ecdh(struct work_struct *work)
 {
 	struct gip_auth *auth = container_of(work, typeof(*auth),
-							 work_exchange_ecdh);
+					     work_exchange_ecdh);
 	struct gip_auth2_pkt_host_pubkey pkt = {};
 	u8 random[GIP_AUTH_RANDOM_LEN * 2];
 	u8 secret[GIP_AUTH2_SECRET_LEN];
@@ -265,10 +265,10 @@ static void gip_auth2_exchange_ecdh(struct work_struct *work)
 
 	memcpy(random, auth->random_host, sizeof(auth->random_host));
 	memcpy(random + sizeof(auth->random_host), auth->random_client,
-				 sizeof(auth->random_client));
+	       sizeof(auth->random_client));
 
 	err = gip_auth_compute_ecdh(auth->pubkey_client2, pkt.pubkey,
-						sizeof(pkt.pubkey), secret);
+				    sizeof(pkt.pubkey), secret);
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute ECDH failed: %d\n",
 			__func__, err);
@@ -276,10 +276,10 @@ static void gip_auth2_exchange_ecdh(struct work_struct *work)
 	}
 
 	err = gip_auth_compute_prf(auth->shash_prf, "Master Secret",
-					 secret, sizeof(secret),
-					 random, sizeof(random),
-					 auth->master_secret,
-					 sizeof(auth->master_secret));
+				   secret, sizeof(secret),
+				   random, sizeof(random),
+				   auth->master_secret,
+				   sizeof(auth->master_secret));
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute PRF failed: %d\n",
 			__func__, err);
@@ -305,7 +305,7 @@ static int gip_auth_send_pkt_hello(struct gip_auth *auth)
 }
 
 static int gip_auth_send_pkt_finish(struct gip_auth *auth,
-						enum gip_auth_command_handshake cmd)
+				    enum gip_auth_command_handshake cmd)
 {
 	struct gip_auth_pkt_host_finish pkt = {};
 	u8 transcript[GIP_AUTH_TRANSCRIPT_LEN];
@@ -319,10 +319,10 @@ static int gip_auth_send_pkt_finish(struct gip_auth *auth,
 	}
 
 	err = gip_auth_compute_prf(auth->shash_prf, "Host Finished",
-					 auth->master_secret,
-					 sizeof(auth->master_secret),
-					 transcript, sizeof(transcript),
-					 pkt.transcript, sizeof(pkt.transcript));
+				   auth->master_secret,
+				   sizeof(auth->master_secret),
+				   transcript, sizeof(transcript),
+				   pkt.transcript, sizeof(pkt.transcript));
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute PRF failed: %d\n",
 			__func__, err);
@@ -337,27 +337,27 @@ static int gip_auth_handle_pkt_acknowledge(struct gip_auth *auth)
 	switch (auth->last_sent_command) {
 	case GIP_AUTH2_CMD_HOST_HELLO:
 		return gip_auth_request_pkt(auth, GIP_AUTH2_CMD_CLIENT_HELLO,
-							sizeof(struct gip_auth2_pkt_client_hello));
+					    sizeof(struct gip_auth2_pkt_client_hello));
 	case GIP_AUTH2_CMD_HOST_PUBKEY:
 		return gip_auth_send_pkt_finish(auth, GIP_AUTH2_CMD_HOST_FINISH);
 	case GIP_AUTH2_CMD_HOST_FINISH:
 		return gip_auth_request_pkt(auth, GIP_AUTH2_CMD_CLIENT_FINISH,
-							sizeof(struct gip_auth2_pkt_client_finish));
+					    sizeof(struct gip_auth2_pkt_client_finish));
 	case GIP_AUTH_CMD_HOST_HELLO:
 		return gip_auth_request_pkt(auth, GIP_AUTH_CMD_CLIENT_HELLO,
-							sizeof(struct gip_auth_pkt_client_hello));
+					    sizeof(struct gip_auth_pkt_client_hello));
 	case GIP_AUTH_CMD_HOST_SECRET:
 		return gip_auth_send_pkt_finish(auth, GIP_AUTH_CMD_HOST_FINISH);
 	case GIP_AUTH_CMD_HOST_FINISH:
 		return gip_auth_request_pkt(auth, GIP_AUTH_CMD_CLIENT_FINISH,
-							sizeof(struct gip_auth_pkt_client_finish));
+					    sizeof(struct gip_auth_pkt_client_finish));
 	default:
 		return -EPROTO;
 	}
 }
 
 static int gip_auth_handle_pkt_hello(struct gip_auth *auth,
-						 void *data, u32 len)
+				     void *data, u32 len)
 {
 	struct gip_auth_pkt_client_hello *pkt = data;
 
@@ -367,11 +367,11 @@ static int gip_auth_handle_pkt_hello(struct gip_auth *auth,
 	memcpy(auth->random_client, pkt->random, sizeof(pkt->random));
 
 	return gip_auth_request_pkt(auth, GIP_AUTH_CMD_CLIENT_CERTIFICATE,
-						GIP_AUTH_CERTIFICATE_MAX_LEN);
+				    GIP_AUTH_CERTIFICATE_MAX_LEN);
 }
 
 static int gip_auth_handle_pkt_certificate(struct gip_auth *auth,
-						 void *data, u32 len)
+					   void *data, u32 len)
 {
 	/* ASN.1 SEQUENCE (len = 0x04 + 0x010a) */
 	u8 asn1_seq[] = { 0x30, 0x82, 0x01, 0x0a };
@@ -404,7 +404,7 @@ static int gip_auth_handle_pkt_certificate(struct gip_auth *auth,
 }
 
 static int gip_auth_handle_pkt_finish(struct gip_auth *auth,
-							void *data, u32 len)
+				      void *data, u32 len)
 {
 	struct gip_auth_pkt_client_finish *pkt = data;
 	u8 transcript[GIP_AUTH_TRANSCRIPT_LEN];
@@ -422,10 +422,10 @@ static int gip_auth_handle_pkt_finish(struct gip_auth *auth,
 	}
 
 	err = gip_auth_compute_prf(auth->shash_prf, "Device Finished",
-					 auth->master_secret,
-					 sizeof(auth->master_secret),
-					 transcript, sizeof(transcript),
-					 finished, sizeof(finished));
+				   auth->master_secret,
+				   sizeof(auth->master_secret),
+				   transcript, sizeof(transcript),
+				   finished, sizeof(finished));
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute PRF failed: %d\n",
 			__func__, err);
@@ -446,23 +446,23 @@ static int gip_auth_handle_pkt_finish(struct gip_auth *auth,
 static void gip_auth_exchange_rsa(struct work_struct *work)
 {
 	struct gip_auth *auth = container_of(work, typeof(*auth),
-							 work_exchange_rsa);
+					     work_exchange_rsa);
 	struct gip_auth_pkt_host_secret pkt = {};
 	u8 random[GIP_AUTH_RANDOM_LEN * 2];
 	int err;
 
 	memcpy(random, auth->random_host, sizeof(auth->random_host));
 	memcpy(random + sizeof(auth->random_host), auth->random_client,
-				 sizeof(auth->random_client));
+	       sizeof(auth->random_client));
 
 	/* get random premaster secret */
 	get_random_bytes(auth->pms, sizeof(auth->pms));
 
 	err = gip_auth_encrypt_rsa(auth->pubkey_client,
-					 sizeof(auth->pubkey_client),
-					 auth->pms, sizeof(auth->pms),
-					 pkt.encrypted_pms,
-					 sizeof(pkt.encrypted_pms));
+				   sizeof(auth->pubkey_client),
+				   auth->pms, sizeof(auth->pms),
+				   pkt.encrypted_pms,
+				   sizeof(pkt.encrypted_pms));
 	if (err) {
 		dev_err(&auth->client->dev, "%s: encrypt RSA failed: %d\n",
 			__func__, err);
@@ -470,10 +470,10 @@ static void gip_auth_exchange_rsa(struct work_struct *work)
 	}
 
 	err = gip_auth_compute_prf(auth->shash_prf, "Master Secret",
-					 auth->pms, sizeof(auth->pms),
-					 random, sizeof(random),
-					 auth->master_secret,
-					 sizeof(auth->master_secret));
+				   auth->pms, sizeof(auth->pms),
+				   random, sizeof(random),
+				   auth->master_secret,
+				   sizeof(auth->master_secret));
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute PRF failed: %d\n",
 			__func__, err);
@@ -501,21 +501,21 @@ EXPORT_SYMBOL_GPL(gip_auth_send_complete);
 static void gip_auth_complete_handshake(struct work_struct *work)
 {
 	struct gip_auth *auth = container_of(work, typeof(*auth),
-							 work_complete);
+					     work_complete);
 	u8 random[GIP_AUTH_RANDOM_LEN * 2];
 	u8 key[GIP_AUTH_SESSION_KEY_LEN];
 	int err;
 
 	memcpy(random, auth->random_host, sizeof(auth->random_host));
 	memcpy(random + sizeof(auth->random_host), auth->random_client,
-				 sizeof(auth->random_client));
+	       sizeof(auth->random_client));
 
 	err = gip_auth_compute_prf(auth->shash_prf,
-					 "EXPORTER DAWN data channel session key for controller",
-					 auth->master_secret,
-					 sizeof(auth->master_secret),
-					 random, sizeof(random),
-					 key, sizeof(key));
+				   "EXPORTER DAWN data channel session key for controller",
+				   auth->master_secret,
+				   sizeof(auth->master_secret),
+				   random, sizeof(random),
+				   key, sizeof(key));
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute PRF failed: %d\n",
 			__func__, err);
@@ -579,13 +579,13 @@ static int gip_auth_process_pkt_data(struct gip_auth *auth, void *data, u32 len)
 	}
 
 	err = gip_auth_dispatch_pkt(auth, hdr->data.command,
-						data + sizeof(*hdr), len - sizeof(*hdr));
+				    data + sizeof(*hdr), len - sizeof(*hdr));
 	if (err)
 		return err;
 
 	return crypto_shash_update(auth->shash_transcript,
-					 data + sizeof(hdr->handshake),
-					 len - sizeof(hdr->handshake));
+				   data + sizeof(hdr->handshake),
+				   len - sizeof(hdr->handshake));
 }
 
 int gip_auth_process_pkt(struct gip_auth *auth, void *data, u32 len)

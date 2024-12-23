@@ -52,7 +52,7 @@ enum gip_gamepad_motor {
 
 enum gip_init_state {
 	GIP_GP_AUTHENTICATING		 = 0x10,
-	GIP_GP_READY						 = 0xFF,
+	GIP_GP_READY			 = 0xFF,
 };
 
 struct gip_gamepad_pkt_input {

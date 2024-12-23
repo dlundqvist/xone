@@ -283,7 +283,8 @@ static int gip_decode_header(struct gip_header *hdr, u8 *data, int len)
 
 static int gip_init_chunk_buffer(struct gip_client *client,
 				 struct gip_header *hdr,
-				 struct gip_chunk_buffer **buf)
+				 struct gip_chunk_buffer **buf,
+				 bool is_input)
 {
 	/* offset is total length of all chunks */
 	if (hdr->chunk_offset > GIP_CHUNK_BUF_MAX_LENGTH)
@@ -300,7 +301,9 @@ static int gip_init_chunk_buffer(struct gip_client *client,
 		return -ENOMEM;
 
 	(*buf)->header = *hdr;
-	(*buf)->header.options &= ~(GIP_OPT_ACKNOWLEDGE | GIP_OPT_CHUNK_START);
+	/* only clear GIP_OPT_ACKNOWLEDGE for outgoing chunks,
+	 * we should keep it for incoming chunks */
+	(*buf)->header.options &= ~(is_input?GIP_OPT_CHUNK_START:GIP_OPT_CHUNK_START|GIP_OPT_ACKNOWLEDGE);
 	(*buf)->length = hdr->chunk_offset;
 	gip_dbg(client, "%s: command=0x%02x, length=0x%04x\n", __func__,
 		(*buf)->header.command, (*buf)->length);
@@ -375,7 +378,7 @@ static int gip_send_pkt(struct gip_client *client,
 		return err;
 
 	/* allocate buffer for all chunks */
-	err = gip_init_chunk_buffer(client, hdr, &client->chunk_buf_in);
+	err = gip_init_chunk_buffer(client, hdr, &client->chunk_buf_in,false);
 	if (err)
 		return err;
 
@@ -1467,6 +1470,14 @@ static int gip_process_pkt_chunked(struct gip_client *client,
 	}
 
 	if (hdr->packet_length) {
+		/* acknowledge last non-empty packets when asked in chunk start header */
+		if ( (buf->header.options & GIP_OPT_ACKNOWLEDGE) 
+		  && (buf->length == hdr->chunk_offset + hdr->packet_length) ) {
+			gip_dbg(client, "%s: acknowledge last chunk.\n", __func__);
+			err = gip_acknowledge_pkt(client, hdr);
+			if (err)
+				return err;
+		}
 		memcpy(buf->data + hdr->chunk_offset, data, hdr->packet_length);
 		return 0;
 	}
@@ -1487,7 +1498,7 @@ static int gip_process_pkt(struct gip_client *client,
 
 	if (hdr->options & GIP_OPT_CHUNK_START) {
 		err = gip_init_chunk_buffer(client, hdr,
-					    &client->chunk_buf_out);
+					    &client->chunk_buf_out,true);
 		if (err)
 			return err;
 

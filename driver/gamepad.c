@@ -51,9 +51,7 @@ enum gip_gamepad_motor {
 };
 
 enum gip_init_state {
-  GIP_GP_WAIT_STATUS       = 0x00,
   GIP_GP_AUTHENTICATING    = 0x10,
-  GIP_GP_AUTHENTICATED     = 0x20,
   GIP_GP_READY             = 0xFF,
 };
 
@@ -232,8 +230,11 @@ static int gip_gamepad_op_battery(struct gip_client *client,
 	gip_report_battery(&gamepad->battery, type, level);
 
   // if this is the 1st status message then start handshake
-  if (gamepad->state == GIP_GP_WAIT_STATUS)
+  if (gamepad->state == GIP_GP_AUTHENTICATING)
+  {
+    gamepad->state = GIP_GP_READY;
     schedule_work(&gamepad->work);
+  }
 
   return 0;
 }
@@ -243,26 +244,8 @@ static int gip_gamepad_op_authenticate(struct gip_client *client,
 {
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
 
+	dev_dbg(&client->dev, "%s: gamepad authenticate pkt sz=%d.\n", __func__, len);
 	return gip_auth_process_pkt(&gamepad->auth, data, len);
-}
-
-static int gip_gamepad_op_authenticated(struct gip_client *client, bool success)
-{
-  struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
-
-  if (success)
-  {
-    gamepad->state = GIP_GP_AUTHENTICATED;
-    int err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
-    if (err)
-      return err;
-
-    err = gip_gamepad_init_input(gamepad);
-    if (err)
-      return err;
-    gamepad->state = GIP_GP_READY;
-  }
-  return 0;
 }
 
 static int gip_gamepad_op_guide_button(struct gip_client *client, bool down)
@@ -330,9 +313,10 @@ static void gip_gamepad_start_handshake(struct work_struct *work)
   struct gip_gamepad *gamepad = container_of(work, struct gip_gamepad, work);
 
   int err = gip_auth_start_handshake(&gamepad->auth, gamepad->client);
-  if (err)
+  if (err) {
+	  dev_dbg(&gamepad->client->dev, "%s: gamepad handshake failed err=%d.\n", __func__, err);
     return;
-  gamepad->state = GIP_GP_AUTHENTICATING;
+  }
 }
 
 static int gip_gamepad_probe(struct gip_client *client)
@@ -347,7 +331,7 @@ static int gip_gamepad_probe(struct gip_client *client)
   INIT_WORK(&gamepad->work, gip_gamepad_start_handshake);
 
 	gamepad->client = client;
-  gamepad->state = GIP_GP_WAIT_STATUS;
+  gamepad->state = GIP_GP_AUTHENTICATING;
 
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err)
@@ -361,8 +345,17 @@ static int gip_gamepad_probe(struct gip_client *client)
 	if (err)
 		return err;
 
+    err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
+    if (err)
+      return err;
+
+    err = gip_gamepad_init_input(gamepad);
+    if (err)
+      return err;
+
 	dev_set_drvdata(&client->dev, gamepad);
 
+	dev_dbg(&gamepad->client->dev, "%s: gamepad probed.\n", __func__);
 	return 0;
 }
 
@@ -381,7 +374,6 @@ static struct gip_driver gip_gamepad_driver = {
 	.ops = {
 		.battery = gip_gamepad_op_battery,
 		.authenticate = gip_gamepad_op_authenticate,
-    .authenticated = gip_gamepad_op_authenticated,
 		.guide_button = gip_gamepad_op_guide_button,
 		.input = gip_gamepad_op_input,
 	},

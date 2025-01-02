@@ -44,6 +44,8 @@ struct gip_headset {
 	struct delayed_work work_config;
 	struct delayed_work work_power_on;
 	struct work_struct work_register;
+	bool got_ready;
+	bool got_initial_volume;
 	bool registered;
 
 	struct hrtimer timer;
@@ -389,9 +391,27 @@ static int gip_headset_op_authenticate(struct gip_client *client,
 	return gip_auth_process_pkt(&headset->auth, data, len);
 }
 
+static void gip_headset_maybe_register(struct gip_headset *headset)
+{
+	if (!headset->got_ready || !headset->got_initial_volume)
+		return;
+
+	/* ready signal is required as client->audio_config_out is initialized in it */
+	/* and used inside work_register -> gip_init_audio_out */
+	if (!headset->registered) {
+		schedule_work(&headset->work_register);
+		headset->registered = true;
+	}
+}
+
 static int gip_headset_op_audio_ready(struct gip_client *client)
 {
 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
+
+	headset->got_ready = true;
+	/* headset reported supported audio formats */
+	/* (necessary for buffer size calculcations) */
+	gip_headset_maybe_register(headset);
 
 	schedule_delayed_work(&headset->work_power_on, GIP_HS_POWER_ON_DELAY);
 
@@ -403,11 +423,9 @@ static int gip_headset_op_audio_volume(struct gip_client *client,
 {
 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
 
-	/* headset reported initial volume, start audio I/O */
-	if (!headset->registered) {
-		schedule_work(&headset->work_register);
-		headset->registered = true;
-	}
+	/* headset reported initial volume, maybe start audio I/O */
+	headset->got_initial_volume = true;
+	gip_headset_maybe_register(headset);
 
 	/* ignore hardware volume, let software handle volume changes */
 	return 0;

@@ -44,7 +44,7 @@ Always update your Xbox devices to the latest firmware version!
     - [x] Xbox One Chat Headset
     - [x] Xbox One Stereo Headset (adapter or jack)
     - [x] Xbox Wireless Headset
-    - [x] Third party wireless headsets (SteelSeries, Razer, etc.)
+    - [x] Third party wired and wireless headsets (SteelSeries, Razer, etc.)
 - [x] Guitars & Drums
     - [x] Mad Catz Rock Band 4 Wireless Fender Stratocaster
     - [x] Mad Catz Rock Band 4 Wireless Drum Kit

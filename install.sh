@@ -36,6 +36,14 @@ echo "Installing xone $version..."
 cp -r . "$source"
 find "$source" -type f \( -name dkms.conf -o -name '*.c' \) -exec sed -i "s/#VERSION#/$version/" {} +
 
+# The MAKE line in dkms.conf is required for kernels built using clang. Remove
+# it if the kernel is built using gcc - i.e. "clang" is not in the kernel
+# version string.
+
+if [ -z "$(cat /proc/version | grep clang)" ]; then
+    find "$source" -type f \( -name dkms.conf -o -name '*.c' \) -exec sed -i "/^MAKE/d" {} +
+fi
+
 if [ "${1:-}" != --release ]; then
     echo 'ccflags-y += -DDEBUG' >> "$source/Kbuild"
 fi

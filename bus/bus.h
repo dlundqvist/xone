@@ -63,6 +63,8 @@ struct gip_client {
 	struct device dev;
 	u8 id;
 
+    u8 auth_complete;
+
 	struct gip_adapter *adapter;
 	struct gip_driver *drv;
 	struct semaphore drv_lock;

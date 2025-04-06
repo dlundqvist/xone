@@ -260,10 +260,15 @@ static enum hrtimer_restart gip_headset_send_samples(struct hrtimer *timer)
 			snd_pcm_period_elapsed(sub);
 	}
 
-	/* retry if driver runs out of buffers */
-	err = gip_send_audio_samples(headset->client, headset->buffer);
-	if (err && err != -ENOSPC)
-		return HRTIMER_NORESTART;
+	/* Do not send, if device is not authorised. Oficially, should be ignored but
+	* some headsets do not like that */
+    if (headset->client->auth_complete)
+    {
+    	/* retry if driver runs out of buffers */
+		err = gip_send_audio_samples(headset->client, headset->buffer);
+		if (err && err != -ENOSPC)
+			return HRTIMER_NORESTART;
+    }
 
 	hrtimer_forward_now(timer, ms_to_ktime(GIP_AUDIO_INTERVAL));
 
@@ -494,6 +499,8 @@ static int gip_headset_probe(struct gip_client *client)
 	headset->client = client;
 	headset->chat_headset = client->hardware.vendor == GIP_VID_MICROSOFT &&
 				client->hardware.product == GIP_HS_PID_CHAT;
+
+    headset->client->auth_complete = false;
 
 	INIT_DELAYED_WORK(&headset->work_config, gip_headset_config);
 	INIT_DELAYED_WORK(&headset->work_power_on, gip_headset_power_on);

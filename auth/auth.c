@@ -536,6 +536,8 @@ static void gip_auth_complete_handshake(struct work_struct *work)
 	if (err)
 		dev_err(&auth->client->dev,
 			"%s: set encryption key failed: %d\n", __func__, err);
+
+    auth->client->auth_complete = true;
 }
 
 static int gip_auth_dispatch_pkt(struct gip_auth *auth,

@@ -262,7 +262,7 @@ static enum hrtimer_restart gip_headset_send_samples(struct hrtimer *timer)
 
 	/* Do not send, if device is not authorised. Oficially, should be ignored but
 	* some headsets do not like that */
-    if (headset->client->auth_complete)
+    if (headset->auth.auth_state == GIP_AUTH_COMPLETE)
     {
     	/* retry if driver runs out of buffers */
 		err = gip_send_audio_samples(headset->client, headset->buffer);
@@ -500,7 +500,7 @@ static int gip_headset_probe(struct gip_client *client)
 	headset->chat_headset = client->hardware.vendor == GIP_VID_MICROSOFT &&
 				client->hardware.product == GIP_HS_PID_CHAT;
 
-    headset->client->auth_complete = false;
+    headset->auth.auth_state = GIP_AUTH_BEFORE_AUTH;
 
 	INIT_DELAYED_WORK(&headset->work_config, gip_headset_config);
 	INIT_DELAYED_WORK(&headset->work_power_on, gip_headset_power_on);

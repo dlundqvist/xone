@@ -519,6 +519,7 @@ static void gip_auth_complete_handshake(struct work_struct *work)
 	if (err) {
 		dev_err(&auth->client->dev, "%s: compute PRF failed: %d\n",
 			__func__, err);
+        auth->auth_state = GIP_AUTH_ERROR;
 		return;
 	}
 
@@ -529,15 +530,19 @@ static void gip_auth_complete_handshake(struct work_struct *work)
 	if (err) {
 		dev_err(&auth->client->dev, "%s: send complete failed: %d\n",
 			__func__, err);
+        auth->auth_state = GIP_AUTH_ERROR;
 		return;
 	}
 
 	err = gip_set_encryption_key(auth->client, key, sizeof(key));
-	if (err)
+	if (err){
 		dev_err(&auth->client->dev,
 			"%s: set encryption key failed: %d\n", __func__, err);
+        auth->auth_state = GIP_AUTH_ERROR;
+        return;
+    }
 
-    auth->client->auth_complete = true;
+    auth->auth_state = GIP_AUTH_COMPLETE;
 }
 
 static int gip_auth_dispatch_pkt(struct gip_auth *auth,
@@ -609,6 +614,7 @@ int gip_auth_process_pkt(struct gip_auth *auth, void *data, u32 len)
 
 		dev_err(&auth->client->dev, "%s: handshake failed: 0x%02x\n",
 			__func__, hdr->command);
+        auth->auth_state = GIP_AUTH_ERROR;
 		return -EPROTO;
 	}
 
@@ -632,6 +638,7 @@ static void gip_auth_release(void *res)
 	auth->client = NULL;
 	auth->shash_transcript = NULL;
 	auth->shash_prf = NULL;
+    auth->auth_state = GIP_AUTH_BEFORE_AUTH;
 }
 
 int gip_auth_start_handshake(struct gip_auth *auth, struct gip_client *client)
@@ -653,14 +660,17 @@ int gip_auth_start_handshake(struct gip_auth *auth, struct gip_client *client)
 	auth->client = client;
 	auth->shash_transcript = shash_transcript;
 	auth->shash_prf = shash_prf;
+    auth->auth_state = GIP_AUTH_STARTED;
 
 	INIT_WORK(&auth->work_exchange_rsa, gip_auth_exchange_rsa);
 	INIT_WORK(&auth->work_exchange_ecdh, gip_auth2_exchange_ecdh);
 	INIT_WORK(&auth->work_complete, gip_auth_complete_handshake);
 
 	err = devm_add_action_or_reset(&client->dev, gip_auth_release, auth);
-	if (err)
+	if (err){
+        auth->auth_state = GIP_AUTH_ERROR;
 		return err;
+    }
 
 	return gip_auth_send_pkt_hello(auth);
 }

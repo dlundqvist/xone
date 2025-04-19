@@ -23,6 +23,13 @@
 
 struct gip_client;
 
+enum gip_auth_state {
+	GIP_AUTH_BEFORE_AUTH = 0x00,
+	GIP_AUTH_STARTED = 0x01,
+	GIP_AUTH_COMPLETE = 0x02,
+	GIP_AUTH_ERROR = 0x99,
+};
+
 struct gip_auth {
 	struct gip_client *client;
 
@@ -32,6 +39,8 @@ struct gip_auth {
 	struct work_struct work_exchange_rsa;
 	struct work_struct work_exchange_ecdh;
 	struct work_struct work_complete;
+
+	u8 auth_state;
 
 	u8 last_sent_command;
 

@@ -6,6 +6,7 @@
 #include <linux/module.h>
 #include <linux/uuid.h>
 #include <linux/timer.h>
+#include <linux/version.h>
 
 #include "common.h"
 #include "../auth/auth.h"
@@ -207,8 +208,11 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 	return 0;
 
 err_delete_timer:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	timer_delete_sync(&gamepad->rumble.timer);
+#else
 	del_timer_sync(&gamepad->rumble.timer);
-
+#endif
 	return err;
 }
 
@@ -335,7 +339,11 @@ static void gip_gamepad_remove(struct gip_client *client)
 {
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	timer_delete_sync(&gamepad->rumble.timer);
+#else
 	del_timer_sync(&gamepad->rumble.timer);
+#endif
 }
 
 static struct gip_driver gip_gamepad_driver = {

@@ -10,6 +10,7 @@
 #include <linux/usb.h>
 #include <linux/sysfs.h>
 #include <linux/ieee80211.h>
+#include <linux/firmware.h>
 #include <net/cfg80211.h>
 
 #include "mt76.h"
@@ -853,9 +854,12 @@ static int xone_dongle_init_urbs_out(struct xone_dongle *dongle)
 	return 0;
 }
 
-static int xone_dongle_init(struct xone_dongle *dongle)
+static int xone_dongle_init(struct xone_dongle *dongle,
+			    const struct usb_device_id *id)
 {
 	struct xone_mt76 *mt = &dongle->mt;
+	const struct firmware *fw;
+	char fwname[25];
 	int err;
 
 	init_usb_anchor(&dongle->urbs_out_idle);
@@ -877,7 +881,30 @@ static int xone_dongle_init(struct xone_dongle *dongle)
 	if (err)
 		return err;
 
-	err = xone_mt76_load_firmware(mt, "xow_dongle.bin");
+	snprintf(fwname, 25, "xow_dongle_%04x_%04x.bin",
+		 id->idVendor, id->idProduct);
+	dev_dbg(dongle->mt.dev, "%s: trying to load firmware %s\n",
+			__func__, fwname);
+	err = request_firmware(&fw, fwname, mt->dev);
+	if (err) {
+		if (err == -ENOENT) {
+			snprintf(fwname, 25, "xow_dongle.bin",
+				 id->idVendor, id->idProduct);
+			dev_dbg(dongle->mt.dev, "%s: trying to load firmware %s\n",
+				__func__, fwname);
+			err = request_firmware(&fw, fwname, mt->dev);
+
+		}
+	}
+
+	if (err) {
+		dev_err(mt->dev, "%s: request firmware failed: %d\n",
+			__func__, err);
+		return err;
+	}
+
+	err = xone_mt76_load_firmware(mt, fw);
+	release_firmware(fw);
 	if (err) {
 		dev_err(mt->dev, "%s: load firmware failed: %d\n",
 			__func__, err);
@@ -982,7 +1009,7 @@ static int xone_dongle_probe(struct usb_interface *intf,
 	spin_lock_init(&dongle->clients_lock);
 	init_waitqueue_head(&dongle->disconnect_wait);
 
-	err = xone_dongle_init(dongle);
+	err = xone_dongle_init(dongle, id);
 	if (err) {
 		xone_dongle_destroy(dongle);
 		return err;
@@ -1063,6 +1090,9 @@ static void xone_dongle_shutdown(struct device *dev)
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
 	int err;
+
+	if (system_state == SYSTEM_RESTART)
+		return;
 
 	err = xone_dongle_power_off_clients(dongle);
 	if (err)

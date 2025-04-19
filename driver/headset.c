@@ -6,6 +6,7 @@
 #include <linux/module.h>
 #include <linux/hrtimer.h>
 #include <linux/vmalloc.h>
+#include <linux/version.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include <sound/pcm.h>
@@ -506,8 +507,13 @@ static int gip_headset_probe(struct gip_client *client)
 	INIT_DELAYED_WORK(&headset->work_power_on, gip_headset_power_on);
 	INIT_WORK(&headset->work_register, gip_headset_register);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	hrtimer_setup(&headset->timer, gip_headset_send_samples,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+#else
 	hrtimer_init(&headset->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	headset->timer.function = gip_headset_send_samples;
+#endif
 
 	err = gip_enable_audio(client);
 	if (err)

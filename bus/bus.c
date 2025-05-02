@@ -58,9 +58,6 @@ static struct device_type gip_client_type = {
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 static int gip_bus_match(struct device *dev, struct device_driver *driver)
-#else
-static int gip_bus_match(struct device *dev, const struct device_driver *driver)
-#endif
 {
 	struct gip_client *client;
 	struct gip_driver *drv;
@@ -78,6 +75,27 @@ static int gip_bus_match(struct device *dev, const struct device_driver *driver)
 
 	return false;
 }
+#else
+static int gip_bus_match(struct device *dev, const struct device_driver *driver)
+{
+	struct gip_client *client;
+	struct gip_driver *gip_drv;
+	int i;
+
+	if (dev->type != &gip_client_type)
+		return false;
+
+	client = to_gip_client(dev);
+	gip_drv = to_gip_driver(driver);
+
+	for (i = 0; i < client->classes->count; i++)
+		if (!strcmp(client->classes->strings[i], gip_drv->class))
+			return true;
+
+	return false;
+}
+#endif
+
 
 static int gip_bus_probe(struct device *dev)
 {

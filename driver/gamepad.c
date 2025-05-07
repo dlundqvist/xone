@@ -182,6 +182,10 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 	input_set_capability(dev, EV_KEY, BTN_TR);
 	input_set_capability(dev, EV_KEY, BTN_THUMBL);
 	input_set_capability(dev, EV_KEY, BTN_THUMBR);
+	input_set_capability(dev, EV_KEY, BTN_1);
+	input_set_capability(dev, EV_KEY, BTN_2);
+	input_set_capability(dev, EV_KEY, BTN_3);
+	input_set_capability(dev, EV_KEY, BTN_4);
 	input_set_abs_params(dev, ABS_X, -32768, 32767, 16, 128);
 	input_set_abs_params(dev, ABS_RX, -32768, 32767, 16, 128);
 	input_set_abs_params(dev, ABS_Y, -32768, 32767, 16, 128);
@@ -280,6 +284,10 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 	input_report_key(dev, BTN_TR, buttons & GIP_GP_BTN_BUMPER_R);
 	input_report_key(dev, BTN_THUMBL, buttons & GIP_GP_BTN_STICK_L);
 	input_report_key(dev, BTN_THUMBR, buttons & GIP_GP_BTN_STICK_R);
+	input_report_key(dev, BTN_1, ((u8 *)data)[14] & 0x01);
+	input_report_key(dev, BTN_2, ((u8 *)data)[14] & 0x02);
+	input_report_key(dev, BTN_3, ((u8 *)data)[14] & 0x04);
+	input_report_key(dev, BTN_4, ((u8 *)data)[14] & 0x08);
 	input_report_abs(dev, ABS_X, (s16)le16_to_cpu(pkt->stick_left_x));
 	input_report_abs(dev, ABS_RX, (s16)le16_to_cpu(pkt->stick_right_x));
 	input_report_abs(dev, ABS_Y, ~(s16)le16_to_cpu(pkt->stick_left_y));

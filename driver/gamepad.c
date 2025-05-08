@@ -19,6 +19,8 @@
 /* button offset from end of packet */
 #define GIP_GP_BTN_SHARE_OFFSET 18
 
+#define GIP_GP_PADDLE_OFFSET 14
+
 static const guid_t gip_gamepad_guid_share =
 	GUID_INIT(0xecddd2fe, 0xd387, 0x4294,
 		  0xbd, 0x96, 0x1a, 0x71, 0x2e, 0x3d, 0xc7, 0x7d);
@@ -42,6 +44,13 @@ enum gip_gamepad_button {
 	GIP_GP_BTN_BUMPER_R = BIT(13),
 	GIP_GP_BTN_STICK_L = BIT(14),
 	GIP_GP_BTN_STICK_R = BIT(15),
+};
+
+enum gip_gamepad_paddle {
+	GIP_GP_BTN_P1 = BIT(0),
+	GIP_GP_BTN_P2 = BIT(1),
+	GIP_GP_BTN_P3 = BIT(2),
+	GIP_GP_BTN_P4 = BIT(3),
 };
 
 enum gip_gamepad_motor {
@@ -255,12 +264,14 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 	struct gip_gamepad_pkt_input *pkt = data;
 	struct input_dev *dev = gamepad->input.dev;
 	u16 buttons;
+	u8 paddles;
 	u8 share_offset = GIP_GP_BTN_SHARE_OFFSET;
 
 	if (len < sizeof(*pkt))
 		return -EINVAL;
 
 	buttons = le16_to_cpu(pkt->buttons);
+	paddles = ((u8 *) data)[GIP_GP_PADDLE_OFFSET];
 
 	/* share button byte is always at fixed offset from end of packet */
 	if (gamepad->supports_share) {
@@ -284,10 +295,10 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 	input_report_key(dev, BTN_TR, buttons & GIP_GP_BTN_BUMPER_R);
 	input_report_key(dev, BTN_THUMBL, buttons & GIP_GP_BTN_STICK_L);
 	input_report_key(dev, BTN_THUMBR, buttons & GIP_GP_BTN_STICK_R);
-	input_report_key(dev, BTN_1, ((u8 *)data)[14] & 0x01);
-	input_report_key(dev, BTN_2, ((u8 *)data)[14] & 0x02);
-	input_report_key(dev, BTN_3, ((u8 *)data)[14] & 0x04);
-	input_report_key(dev, BTN_4, ((u8 *)data)[14] & 0x08);
+	input_report_key(dev, BTN_1, paddles & GIP_GP_BTN_P1);
+	input_report_key(dev, BTN_2, paddles & GIP_GP_BTN_P2);
+	input_report_key(dev, BTN_3, paddles & GIP_GP_BTN_P3);
+	input_report_key(dev, BTN_4, paddles & GIP_GP_BTN_P4);
 	input_report_abs(dev, ABS_X, (s16)le16_to_cpu(pkt->stick_left_x));
 	input_report_abs(dev, ABS_RX, (s16)le16_to_cpu(pkt->stick_right_x));
 	input_report_abs(dev, ABS_Y, ~(s16)le16_to_cpu(pkt->stick_left_y));

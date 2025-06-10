@@ -206,16 +206,9 @@ static int gip_gamepad_init_extra_data(struct gip_gamepad *gamepad)
 	return gip_init_extra_data(gamepad->client);
 }
 
-static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
+static void gip_gamepad_query_paddles(struct gip_gamepad *gamepad)
 {
-	struct input_dev *dev = gamepad->input.dev;
 	struct gip_hardware hardware = gamepad->client->hardware;
-	int err;
-
-	gamepad->supports_share = gip_has_interface(gamepad->client,
-						    &gip_gamepad_guid_share);
-	gamepad->supports_dli = gip_has_interface(gamepad->client,
-						  &gip_gamepad_guid_dli);
 
 	gamepad->paddle_support = PADDLE_NONE;
 	if(hardware.vendor == GIP_VENDOR_MICROSOFT) {
@@ -235,6 +228,17 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 			}
         }
 	}
+}
+static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
+{
+	struct input_dev *dev = gamepad->input.dev;
+	int err;
+
+	gamepad->supports_share = gip_has_interface(gamepad->client,
+						    &gip_gamepad_guid_share);
+	gamepad->supports_dli = gip_has_interface(gamepad->client,
+						  &gip_gamepad_guid_dli);
+
 
 	if (gamepad->supports_share)
 		input_set_capability(dev, EV_KEY, KEY_RECORD);
@@ -451,9 +455,20 @@ static int gip_gamepad_probe(struct gip_client *client)
 	if (err)
 		return err;
 
-	err = gip_gamepad_init_extra_data(gamepad);
-	if (err)
-		return err;
+	gip_gamepad_query_paddles(gamepad);
+
+	/*
+	xpad sends this for all Elite 2 firmware versions,
+	but it seems to be only necessary for 5.11 paddles.
+
+	Are we missing something that might be beneficial on older Elite 2 firmwares by not sending this???
+	*/
+	if(gamepad->paddle_support == PADDLE_ELITE2_511)
+	{
+		err = gip_gamepad_init_extra_data(gamepad);
+		if (err)
+			return err;
+	}
 
 	err = gip_init_battery(&gamepad->battery, client, GIP_GP_NAME);
 	if (err)

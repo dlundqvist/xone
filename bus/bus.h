@@ -97,6 +97,7 @@ struct gip_driver_ops {
 	int (*audio_volume)(struct gip_client *client, u8 in, u8 out);
 	int (*hid_report)(struct gip_client *client, void *data, u32 len);
 	int (*input)(struct gip_client *client, void *data, u32 len);
+    int (*firmware)(struct gip_client *client, void *data, u32 len);
 	int (*audio_samples)(struct gip_client *client, void *data, u32 len);
 };
 

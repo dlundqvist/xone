@@ -692,6 +692,21 @@ int gip_init_audio_out(struct gip_client *client)
 }
 EXPORT_SYMBOL_GPL(gip_init_audio_out);
 
+int gip_init_extra_data(struct gip_client *client)
+{
+	struct gip_header hdr = {};
+
+	hdr.command = 0x4d; // ???
+	hdr.options |= GIP_OPT_ACKNOWLEDGE; // Because 4
+	hdr.sequence = 1;
+	hdr.packet_length = 2;
+
+	u8 packet_data[] = {0x07, 0x00};
+
+	return gip_send_pkt(client, &hdr, &packet_data);
+}
+EXPORT_SYMBOL_GPL(gip_init_extra_data);
+
 void gip_disable_audio(struct gip_client *client)
 {
 	struct gip_adapter *adap = client->adapter;
@@ -1403,6 +1418,22 @@ static int gip_handle_pkt_audio_samples(struct gip_client *client,
 	return err;
 }
 
+static int gip_handle_pkt_firmware(struct gip_client *client,
+                void *data, u32 len)
+{
+    int err = 0;
+
+    if (down_trylock(&client->drv_lock))
+        return -EBUSY;
+
+    if (client->drv && client->drv->ops.firmware)
+        err = client->drv->ops.firmware(client, data, len);
+
+    up(&client->drv_lock);
+
+    return err;
+}
+
 static int gip_dispatch_pkt(struct gip_client *client,
 			    struct gip_header *hdr, void *data, u32 len)
 {
@@ -1434,6 +1465,8 @@ static int gip_dispatch_pkt(struct gip_client *client,
 	switch (hdr->command) {
 	case GIP_CMD_INPUT:
 		return gip_handle_pkt_input(client, data, len);
+	case GIP_CMD_FIRMWARE:
+		return gip_handle_pkt_firmware(client, data, len);
 	}
 
 	return 0;

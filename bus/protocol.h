@@ -110,6 +110,7 @@ int gip_send_rumble(struct gip_client *client, void *pkt, u32 len);
 int gip_set_led_mode(struct gip_client *client,
 		     enum gip_led_mode mode, u8 brightness);
 int gip_send_audio_samples(struct gip_client *client, void *samples);
+int gip_init_extra_data(struct gip_client *client);
 
 bool gip_has_interface(struct gip_client *client, const guid_t *guid);
 int gip_set_encryption_key(struct gip_client *client, u8 *key, int len);

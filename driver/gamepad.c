@@ -252,6 +252,12 @@ static int gip_gamepad_op_guide_button(struct gip_client *client, bool down)
 	return 0;
 }
 
+static int gip_gamepad_op_authenticated(struct gip_client *client)
+{
+	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
+	return gip_gamepad_init_input(gamepad);
+}
+
 static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 {
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
@@ -333,10 +339,6 @@ static int gip_gamepad_probe(struct gip_client *client)
 	if (err)
 		return err;
 
-	err = gip_gamepad_init_input(gamepad);
-	if (err)
-		return err;
-
 	dev_set_drvdata(&client->dev, gamepad);
 
 	return 0;
@@ -359,6 +361,7 @@ static struct gip_driver gip_gamepad_driver = {
 	.ops = {
 		.battery = gip_gamepad_op_battery,
 		.authenticate = gip_gamepad_op_authenticate,
+		.authenticated = gip_gamepad_op_authenticated,
 		.guide_button = gip_gamepad_op_guide_button,
 		.input = gip_gamepad_op_input,
 	},

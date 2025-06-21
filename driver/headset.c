@@ -46,6 +46,7 @@ struct gip_headset {
 	struct delayed_work work_config;
 	struct delayed_work work_power_on;
 	struct work_struct work_register;
+	bool got_authenticated;
 	bool got_ready;
 	bool got_initial_volume;
 	bool registered;
@@ -119,7 +120,7 @@ static int gip_headset_pcm_hw_free(struct snd_pcm_substream *sub)
 }
 
 static struct page *gip_headset_pcm_get_page(struct snd_pcm_substream *sub,
-                                             unsigned long offset)
+					     unsigned long offset)
 {
 	return vmalloc_to_page(sub->runtime->dma_area + offset);
 }
@@ -261,10 +262,13 @@ static enum hrtimer_restart gip_headset_send_samples(struct hrtimer *timer)
 			snd_pcm_period_elapsed(sub);
 	}
 
-	/* retry if driver runs out of buffers */
-	err = gip_send_audio_samples(headset->client, headset->buffer);
-	if (err && err != -ENOSPC)
-		return HRTIMER_NORESTART;
+	if (headset->got_authenticated)
+	{
+		/* retry if driver runs out of buffers */
+		err = gip_send_audio_samples(headset->client, headset->buffer);
+		if (err && err != -ENOSPC)
+			return HRTIMER_NORESTART;
+	}
 
 	hrtimer_forward_now(timer, ms_to_ktime(GIP_AUDIO_INTERVAL));
 
@@ -314,6 +318,11 @@ static void gip_headset_config(struct work_struct *work)
 	dev_dbg(&client->dev, "%s: format=0x%02x/0x%02x\n", __func__,
 		fmts->data[0], fmts->data[1]);
 
+  /* force headset in idle mode */
+	err = gip_set_power_mode(client, GIP_PWR_SLEEP);
+	if (err)
+		dev_err(&client->dev, "%s: set headset power mode to IDLE failed: %d\n",
+			__func__, err);
 	/* suggest initial audio format */
 	err = gip_suggest_audio_format(client, fmts->data[0], fmts->data[1],
 				       headset->chat_headset);
@@ -329,6 +338,9 @@ static void gip_headset_power_on(struct work_struct *work)
 						   work_power_on);
 	struct gip_client *client = headset->client;
 	int err;
+
+	/* clear previous status of got_authenticated flag */
+	headset->got_authenticated = false;
 
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err) {
@@ -412,6 +424,13 @@ static int gip_headset_op_authenticate(struct gip_client *client,
 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
 
 	return gip_auth_process_pkt(&headset->auth, data, len);
+}
+
+static int gip_headset_op_authenticated(struct gip_client *client)
+{
+	struct gip_headset *headset = dev_get_drvdata(&client->dev);
+	headset->got_authenticated = true;
+	return 0;
 }
 
 static void gip_headset_maybe_register(struct gip_headset *headset)
@@ -548,6 +567,7 @@ static struct gip_driver gip_headset_driver = {
 	.ops = {
 		.battery = gip_headset_op_battery,
 		.authenticate = gip_headset_op_authenticate,
+		.authenticated = gip_headset_op_authenticated,
 		.audio_ready = gip_headset_op_audio_ready,
 		.audio_volume = gip_headset_op_audio_volume,
 		.audio_samples = gip_headset_op_audio_samples,

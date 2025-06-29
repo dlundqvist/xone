@@ -343,11 +343,11 @@ static void gip_headset_power_on(struct work_struct *work)
 
 	/* Check if headset needs authentication before sending audio samples */
 	headset->got_authenticated = true;
-	for (int i = 0; i < ARRAY_SIZE(GIP_HS_CHECK_AUTH_IDS); i++) {
+	for (int i = 0; i < ARRAY_SIZE(GIP_HS_CHECK_AUTH_IDS); i++)
 		if (client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i]) {
 			headset->got_authenticated = false;
+			break;
 		}
-	}
 
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err) {

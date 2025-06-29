@@ -22,7 +22,7 @@
 #define GIP_HS_PID_CHAT 0x0111
 
 #define GIP_HS_CONFIG_DELAY msecs_to_jiffies(1000)
-#define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(1000)
+#define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(750)
 
 static const struct snd_pcm_hardware gip_headset_pcm_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
@@ -46,7 +46,6 @@ struct gip_headset {
 	struct delayed_work work_config;
 	struct delayed_work work_power_on;
 	struct work_struct work_register;
-	bool got_authenticated;
 	bool got_ready;
 	bool got_initial_volume;
 	bool registered;
@@ -262,12 +261,10 @@ static enum hrtimer_restart gip_headset_send_samples(struct hrtimer *timer)
 			snd_pcm_period_elapsed(sub);
 	}
 
-	if (headset->got_authenticated) {
-		/* retry if driver runs out of buffers */
-		err = gip_send_audio_samples(headset->client, headset->buffer);
-		if (err && err != -ENOSPC)
-			return HRTIMER_NORESTART;
-	}
+	/* retry if driver runs out of buffers */
+	err = gip_send_audio_samples(headset->client, headset->buffer);
+	if (err && err != -ENOSPC)
+		return HRTIMER_NORESTART;
 
 	hrtimer_forward_now(timer, ms_to_ktime(GIP_AUDIO_INTERVAL));
 
@@ -324,6 +321,7 @@ static void gip_headset_config(struct work_struct *work)
 			"%s: set headset power mode to IDLE failed: %d\n",
 			__func__, err);
 	/* suggest initial audio format */
+	dev_dbg(&client->dev, "%s: suggest format.\n", __func__);
 	err = gip_suggest_audio_format(client, fmts->data[0], fmts->data[1],
 				       headset->chat_headset);
 	if (err)
@@ -339,9 +337,7 @@ static void gip_headset_power_on(struct work_struct *work)
 	struct gip_client *client = headset->client;
 	int err;
 
-	/* clear previous status of got_authenticated flag */
-	headset->got_authenticated = false;
-
+	dev_dbg(&client->dev, "%s: set power ON.\n", __func__);
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err) {
 		dev_err(&client->dev, "%s: set power mode failed: %d\n",
@@ -379,6 +375,7 @@ static void gip_headset_register(struct work_struct *work)
 	if (!headset->buffer)
 		return;
 
+	dev_dbg(&client->dev, "%s: init pcm device.\n", __func__);
 	err = gip_headset_init_pcm(headset);
 	if (err) {
 		dev_err(&client->dev, "%s: init PCM failed: %d\n",
@@ -397,6 +394,7 @@ static void gip_headset_register(struct work_struct *work)
 		}
 	}
 
+	dev_dbg(&client->dev, "%s: init audio out.\n", __func__);
 	err = gip_init_audio_out(client);
 	if (err) {
 		dev_err(&client->dev, "%s: init audio out failed: %d\n",
@@ -426,13 +424,6 @@ static int gip_headset_op_authenticate(struct gip_client *client,
 	return gip_auth_process_pkt(&headset->auth, data, len);
 }
 
-static int gip_headset_op_authenticated(struct gip_client *client)
-{
-	struct gip_headset *headset = dev_get_drvdata(&client->dev);
-	headset->got_authenticated = true;
-	return 0;
-}
-
 static void gip_headset_maybe_register(struct gip_headset *headset)
 {
 	if (!headset->got_ready || !headset->got_initial_volume)
@@ -450,6 +441,7 @@ static int gip_headset_op_audio_ready(struct gip_client *client)
 {
 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
 
+	dev_dbg(&client->dev, "%s: audio ready.\n", __func__);
 	headset->got_ready = true;
 	/* headset reported supported audio formats */
 	/* (necessary for buffer size calculcations) */
@@ -567,7 +559,6 @@ static struct gip_driver gip_headset_driver = {
 	.ops = {
 		.battery = gip_headset_op_battery,
 		.authenticate = gip_headset_op_authenticate,
-		.authenticated = gip_headset_op_authenticated,
 		.audio_ready = gip_headset_op_audio_ready,
 		.audio_volume = gip_headset_op_audio_volume,
 		.audio_samples = gip_headset_op_audio_samples,

@@ -352,7 +352,7 @@ static void gip_headset_power_on(struct work_struct *work)
 	headset->got_authenticated = true;
 	for (int i = 0; i < ARRAY_SIZE(GIP_HS_CHECK_AUTH_IDS); i++)
 		if (client->hardware.vendor == GIP_HS_CHECK_AUTH_IDS[i].vendor &&
-			client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i].product) {
+		    client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i].product) {
 			headset->got_authenticated = false;
 			dev_dbg(dev, "Headset needs auth before receiving audio");
 			break;

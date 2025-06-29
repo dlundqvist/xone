@@ -31,6 +31,11 @@ struct gip_input {
 	struct input_dev *dev;
 };
 
+struct gip_vidpid {
+	u16 vendor;
+	u16 product;
+};
+
 int gip_init_battery(struct gip_battery *batt, struct gip_client *client,
 		     const char *name);
 void gip_report_battery(struct gip_battery *batt,

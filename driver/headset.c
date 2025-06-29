@@ -24,7 +24,10 @@
 #define GIP_HS_CONFIG_DELAY msecs_to_jiffies(1000)
 #define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(1000)
 
-static u8 GIP_HS_CHECK_AUTH_IDS[] = { 0x0000 };
+static struct gip_vidpid GIP_HS_CHECK_AUTH_IDS[] = { 
+	{0x0000, 0x0000}, // Razer Kaira Pro
+	{0x0001, 0x0001}, // LS35X
+};
 
 static const struct snd_pcm_hardware gip_headset_pcm_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
@@ -339,13 +342,19 @@ static void gip_headset_power_on(struct work_struct *work)
 						   typeof(*headset),
 						   work_power_on);
 	struct gip_client *client = headset->client;
+	const struct device *dev = &client->adapter->dev;
 	int err;
 
-	/* Check if headset needs authentication before sending audio samples */
+	dev_dbg(client, "Headset vendor: 0x%4x\n", client->hardware.vendor);
+	dev_dbg(client, "Headset product: 0x%4x\n", client->hardware.product);
+	
+	/* Check if headset needs authentication before receiving audio samples */
 	headset->got_authenticated = true;
 	for (int i = 0; i < ARRAY_SIZE(GIP_HS_CHECK_AUTH_IDS); i++)
-		if (client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i]) {
+		if (client->hardware.vendor == GIP_HS_CHECK_AUTH_IDS[i].vendor &&
+			client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i].product) {
 			headset->got_authenticated = false;
+			dev_dbg(dev, "Headset needs auth before receiving audio");
 			break;
 		}
 

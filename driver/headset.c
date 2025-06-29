@@ -24,6 +24,8 @@
 #define GIP_HS_CONFIG_DELAY msecs_to_jiffies(1000)
 #define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(1000)
 
+static u8 GIP_HS_CHECK_AUTH_IDS[] = { 0x0000 };
+
 static const struct snd_pcm_hardware gip_headset_pcm_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_MMAP_VALID |
@@ -339,8 +341,13 @@ static void gip_headset_power_on(struct work_struct *work)
 	struct gip_client *client = headset->client;
 	int err;
 
-	/* clear previous status of got_authenticated flag */
-	headset->got_authenticated = false;
+	/* Check if headset needs authentication before sending audio samples */
+	headset->got_authenticated = true;
+	for (int i = 0; i < ARRAY_SIZE(GIP_HS_CHECK_AUTH_IDS); i++) {
+		if (client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i]) {
+			headset->got_authenticated = false;
+		}
+	}
 
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err) {

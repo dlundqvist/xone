@@ -345,8 +345,8 @@ static void gip_headset_power_on(struct work_struct *work)
 	const struct device *dev = &client->adapter->dev;
 	int err;
 
-	dev_dbg(client, "Headset vendor: 0x%4x\n", client->hardware.vendor);
-	dev_dbg(client, "Headset product: 0x%4x\n", client->hardware.product);
+	dev_dbg(dev, "Headset vendor: 0x%4x\n", client->hardware.vendor);
+	dev_dbg(dev, "Headset product: 0x%4x\n", client->hardware.product);
 	
 	/* Check if headset needs authentication before receiving audio samples */
 	headset->got_authenticated = true;

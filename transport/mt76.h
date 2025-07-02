@@ -66,7 +66,7 @@ struct sk_buff *xone_mt76_alloc_message(int len, gfp_t gfp);
 void xone_mt76_prep_command(struct sk_buff *skb, enum mt76_mcu_cmd cmd);
 
 int xone_mt76_set_led_mode(struct xone_mt76 *mt, enum xone_mt76_led_mode mode);
-int xone_mt76_load_firmware(struct xone_mt76 *mt, const char *name);
+int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw);
 int xone_mt76_init_radio(struct xone_mt76 *mt);
 int xone_mt76_suspend_radio(struct xone_mt76 *mt);
 int xone_mt76_resume_radio(struct xone_mt76 *mt);

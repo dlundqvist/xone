@@ -6,6 +6,7 @@
 #include <linux/module.h>
 #include <linux/uuid.h>
 #include <linux/timer.h>
+#include <linux/version.h>
 
 #include "common.h"
 #include "../auth/auth.h"
@@ -98,7 +99,14 @@ struct gip_gamepad {
 
 static void gip_gamepad_send_rumble(struct timer_list *timer)
 {
-	struct gip_gamepad_rumble *rumble = from_timer(rumble, timer, timer);
+	// from_timer() has been renamed to timer_container_of() in linux 6.16
+	struct gip_gamepad_rumble *rumble =
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,16,0)
+		timer_container_of(rumble, timer, timer);
+#else
+		from_timer(rumble, timer, timer);
+#endif
+
 	struct gip_gamepad *gamepad = container_of(rumble, typeof(*gamepad),
 						   rumble);
 	unsigned long flags;
@@ -207,8 +215,11 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 	return 0;
 
 err_delete_timer:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	timer_delete_sync(&gamepad->rumble.timer);
+#else
 	del_timer_sync(&gamepad->rumble.timer);
-
+#endif
 	return err;
 }
 
@@ -239,6 +250,12 @@ static int gip_gamepad_op_guide_button(struct gip_client *client, bool down)
 	input_sync(gamepad->input.dev);
 
 	return 0;
+}
+
+static int gip_gamepad_op_authenticated(struct gip_client *client)
+{
+	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
+	return gip_gamepad_init_input(gamepad);
 }
 
 static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
@@ -322,10 +339,6 @@ static int gip_gamepad_probe(struct gip_client *client)
 	if (err)
 		return err;
 
-	err = gip_gamepad_init_input(gamepad);
-	if (err)
-		return err;
-
 	dev_set_drvdata(&client->dev, gamepad);
 
 	return 0;
@@ -335,7 +348,11 @@ static void gip_gamepad_remove(struct gip_client *client)
 {
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	timer_delete_sync(&gamepad->rumble.timer);
+#else
 	del_timer_sync(&gamepad->rumble.timer);
+#endif
 }
 
 static struct gip_driver gip_gamepad_driver = {
@@ -344,6 +361,7 @@ static struct gip_driver gip_gamepad_driver = {
 	.ops = {
 		.battery = gip_gamepad_op_battery,
 		.authenticate = gip_gamepad_op_authenticate,
+		.authenticated = gip_gamepad_op_authenticated,
 		.guide_button = gip_gamepad_op_guide_button,
 		.input = gip_gamepad_op_input,
 	},

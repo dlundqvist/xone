@@ -6,6 +6,7 @@
 #include <linux/module.h>
 #include <linux/hrtimer.h>
 #include <linux/vmalloc.h>
+#include <linux/version.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include <sound/pcm.h>
@@ -22,6 +23,11 @@
 
 #define GIP_HS_CONFIG_DELAY msecs_to_jiffies(1000)
 #define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(1000)
+
+static struct gip_vidpid GIP_HS_CHECK_AUTH_IDS[] = {
+	{0x1532, 0x0a25}, // Razer Kaira Pro
+	{0x2f12, 0x0023}, // LucidSound LS35X
+};
 
 static const struct snd_pcm_hardware gip_headset_pcm_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
@@ -45,6 +51,7 @@ struct gip_headset {
 	struct delayed_work work_config;
 	struct delayed_work work_power_on;
 	struct work_struct work_register;
+	bool got_authenticated;
 	bool got_ready;
 	bool got_initial_volume;
 	bool registered;
@@ -118,7 +125,7 @@ static int gip_headset_pcm_hw_free(struct snd_pcm_substream *sub)
 }
 
 static struct page *gip_headset_pcm_get_page(struct snd_pcm_substream *sub,
-                                             unsigned long offset)
+					     unsigned long offset)
 {
 	return vmalloc_to_page(sub->runtime->dma_area + offset);
 }
@@ -260,10 +267,12 @@ static enum hrtimer_restart gip_headset_send_samples(struct hrtimer *timer)
 			snd_pcm_period_elapsed(sub);
 	}
 
-	/* retry if driver runs out of buffers */
-	err = gip_send_audio_samples(headset->client, headset->buffer);
-	if (err && err != -ENOSPC)
-		return HRTIMER_NORESTART;
+	if (headset->got_authenticated) {
+		/* retry if driver runs out of buffers */
+		err = gip_send_audio_samples(headset->client, headset->buffer);
+		if (err && err != -ENOSPC)
+			return HRTIMER_NORESTART;
+	}
 
 	hrtimer_forward_now(timer, ms_to_ktime(GIP_AUDIO_INTERVAL));
 
@@ -313,6 +322,12 @@ static void gip_headset_config(struct work_struct *work)
 	dev_dbg(&client->dev, "%s: format=0x%02x/0x%02x\n", __func__,
 		fmts->data[0], fmts->data[1]);
 
+	/* force headset in idle mode */
+	err = gip_set_power_mode(client, GIP_PWR_SLEEP);
+	if (err)
+		dev_err(&client->dev,
+			"%s: set headset power mode to IDLE failed: %d\n",
+			__func__, err);
 	/* suggest initial audio format */
 	err = gip_suggest_audio_format(client, fmts->data[0], fmts->data[1],
 				       headset->chat_headset);
@@ -327,7 +342,21 @@ static void gip_headset_power_on(struct work_struct *work)
 						   typeof(*headset),
 						   work_power_on);
 	struct gip_client *client = headset->client;
+	const struct device *dev = &client->adapter->dev;
 	int err;
+
+	dev_dbg(dev, "Headset vendor:  0x%04x\n", client->hardware.vendor);
+	dev_dbg(dev, "Headset product: 0x%04x\n", client->hardware.product);
+
+	/* Check if headset needs authentication before receiving audio samples */
+	headset->got_authenticated = true;
+	for (int i = 0; i < ARRAY_SIZE(GIP_HS_CHECK_AUTH_IDS); i++)
+		if (client->hardware.vendor == GIP_HS_CHECK_AUTH_IDS[i].vendor &&
+		    client->hardware.product == GIP_HS_CHECK_AUTH_IDS[i].product) {
+			headset->got_authenticated = false;
+			dev_dbg(dev, "Headset needs auth before receiving audio");
+			break;
+		}
 
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err) {
@@ -411,6 +440,13 @@ static int gip_headset_op_authenticate(struct gip_client *client,
 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
 
 	return gip_auth_process_pkt(&headset->auth, data, len);
+}
+
+static int gip_headset_op_authenticated(struct gip_client *client)
+{
+	struct gip_headset *headset = dev_get_drvdata(&client->dev);
+	headset->got_authenticated = true;
+	return 0;
 }
 
 static void gip_headset_maybe_register(struct gip_headset *headset)
@@ -499,8 +535,13 @@ static int gip_headset_probe(struct gip_client *client)
 	INIT_DELAYED_WORK(&headset->work_power_on, gip_headset_power_on);
 	INIT_WORK(&headset->work_register, gip_headset_register);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
+	hrtimer_setup(&headset->timer, gip_headset_send_samples,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+#else
 	hrtimer_init(&headset->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	headset->timer.function = gip_headset_send_samples;
+#endif
 
 	err = gip_enable_audio(client);
 	if (err)
@@ -542,6 +583,7 @@ static struct gip_driver gip_headset_driver = {
 	.ops = {
 		.battery = gip_headset_op_battery,
 		.authenticate = gip_headset_op_authenticate,
+		.authenticated = gip_headset_op_authenticated,
 		.audio_ready = gip_headset_op_audio_ready,
 		.audio_volume = gip_headset_op_audio_volume,
 		.audio_samples = gip_headset_op_audio_samples,

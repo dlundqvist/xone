@@ -10,6 +10,8 @@
 #include <linux/usb.h>
 #include <linux/sysfs.h>
 #include <linux/ieee80211.h>
+#include <linux/firmware.h>
+#include <linux/kernel.h>
 #include <net/cfg80211.h>
 
 #include "mt76.h"
@@ -853,9 +855,12 @@ static int xone_dongle_init_urbs_out(struct xone_dongle *dongle)
 	return 0;
 }
 
-static int xone_dongle_init(struct xone_dongle *dongle)
+static int xone_dongle_init(struct xone_dongle *dongle,
+			    const struct usb_device_id *id)
 {
 	struct xone_mt76 *mt = &dongle->mt;
+	const struct firmware *fw;
+	char fwname[25];
 	int err;
 
 	init_usb_anchor(&dongle->urbs_out_idle);
@@ -877,7 +882,37 @@ static int xone_dongle_init(struct xone_dongle *dongle)
 	if (err)
 		return err;
 
-	err = xone_mt76_load_firmware(mt, "xow_dongle.bin");
+	/*
+	 * Skip loading "exact" firmware if the official
+	 * Microsoft dongle has been detected
+	 */
+	bool official_dongle =
+		(id->idVendor == 0x045e && id->idProduct == 0x02fe);
+
+	err = 0;
+	if (!official_dongle) {
+		snprintf(fwname, 25, "xow_dongle_%04x_%04x.bin",
+			 id->idVendor, id->idProduct);
+		dev_dbg(dongle->mt.dev, "%s: trying to load firmware %s\n",
+			__func__, fwname);
+		err = request_firmware(&fw, fwname, mt->dev);
+	}
+
+	if (err == -ENOENT || official_dongle) {
+		snprintf(fwname, 15, "xow_dongle.bin");
+		dev_dbg(dongle->mt.dev, "%s: trying to load firmware %s\n",
+			__func__, fwname);
+		err = request_firmware(&fw, fwname, mt->dev);
+	}
+
+	if (err) {
+		dev_err(mt->dev, "%s: request firmware failed: %d\n",
+			__func__, err);
+		return err;
+	}
+
+	err = xone_mt76_load_firmware(mt, fw);
+	release_firmware(fw);
 	if (err) {
 		dev_err(mt->dev, "%s: load firmware failed: %d\n",
 			__func__, err);
@@ -982,7 +1017,7 @@ static int xone_dongle_probe(struct usb_interface *intf,
 	spin_lock_init(&dongle->clients_lock);
 	init_waitqueue_head(&dongle->disconnect_wait);
 
-	err = xone_dongle_init(dongle);
+	err = xone_dongle_init(dongle, id);
 	if (err) {
 		xone_dongle_destroy(dongle);
 		return err;
@@ -1058,11 +1093,19 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	return xone_mt76_resume_radio(&dongle->mt);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 static void xone_dongle_shutdown(struct device *dev)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
+#else
+static void xone_dongle_shutdown(struct usb_interface *intf)
+{
+#endif
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
 	int err;
+
+	if (system_state == SYSTEM_RESTART)
+		return;
 
 	err = xone_dongle_power_off_clients(dongle);
 	if (err)
@@ -1087,8 +1130,10 @@ static struct usb_driver xone_dongle_driver = {
 	.id_table = xone_dongle_id_table,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0)
 	.drvwrap.driver.shutdown = xone_dongle_shutdown,
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 	.driver.shutdown = xone_dongle_shutdown,
+#else
+	.shutdown = xone_dongle_shutdown,
 #endif
 	.supports_autosuspend = true,
 	.disable_hub_initiated_lpm = true,

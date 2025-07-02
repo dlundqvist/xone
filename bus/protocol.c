@@ -283,14 +283,16 @@ static int gip_decode_header(struct gip_header *hdr, u8 *data, int len)
 
 static int gip_init_chunk_buffer(struct gip_client *client,
 				 struct gip_header *hdr,
-				 struct gip_chunk_buffer **buf)
+				 struct gip_chunk_buffer **buf,
+				 bool is_input)
 {
 	/* offset is total length of all chunks */
 	if (hdr->chunk_offset > GIP_CHUNK_BUF_MAX_LENGTH)
 		return -EINVAL;
 
 	if (*buf) {
-		gip_err(client, "%s: already initialized\n", __func__);
+		gip_err(client, "%s: already initialized (%s)\n", __func__,
+				is_input ? "in" : "out");
 		kfree(*buf);
 		*buf = NULL;
 	}
@@ -300,9 +302,11 @@ static int gip_init_chunk_buffer(struct gip_client *client,
 		return -ENOMEM;
 
 	(*buf)->header = *hdr;
+	/* clear GIP_OPT_ACKNOWLEDGE and GIP_OPT_CHUNK_START */
 	(*buf)->header.options &= ~(GIP_OPT_ACKNOWLEDGE | GIP_OPT_CHUNK_START);
 	(*buf)->length = hdr->chunk_offset;
-	gip_dbg(client, "%s: command=0x%02x, length=0x%04x\n", __func__,
+	gip_dbg(client, "%s[%s]: command=0x%02x, length=0x%04x\n", __func__,
+		is_input ? "in" : "out",
 		(*buf)->header.command, (*buf)->length);
 
 	return 0;
@@ -374,8 +378,8 @@ static int gip_send_pkt(struct gip_client *client,
 	if (err)
 		return err;
 
-	/* allocate buffer for all chunks */
-	err = gip_init_chunk_buffer(client, hdr, &client->chunk_buf_in);
+	/* allocate output buffer for all chunks */
+	err = gip_init_chunk_buffer(client, hdr, &client->chunk_buf_in, false);
 	if (err)
 		return err;
 
@@ -404,6 +408,9 @@ static int gip_acknowledge_pkt(struct gip_client *client,
 
 	if ((ack->options & GIP_OPT_CHUNK) && buf)
 		pkt.remaining = cpu_to_le16(buf->length - len);
+	
+	gip_dbg(client, "%s: ACME command=0x%02x, length=0x%04x\n",
+		__func__, pkt.command, len);
 
 	return gip_send_pkt(client, &hdr, &pkt);
 }
@@ -633,14 +640,24 @@ int gip_set_encryption_key(struct gip_client *client, u8 *key, int len)
 	struct gip_adapter *adap = client->adapter;
 	int err;
 
-	if (!adap->ops->set_encryption_key)
+	if (!adap->ops->set_encryption_key) {
+		gip_dbg(client, "%s: no callback, notifying driver.\n",
+				__func__);
+		if (client->drv->ops.authenticated)
+			return client->drv->ops.authenticated(client);
 		return 0;
+	}
 
 	err = adap->ops->set_encryption_key(adap, key, len);
-	if (err)
+	if (err) {
 		gip_err(client, "%s: set key failed: %d\n", __func__, err);
+		return err;
+	}
 
-	return err;
+	if (client->drv->ops.authenticated)
+		client->drv->ops.authenticated(client);
+
+	return 0;
 }
 
 int gip_enable_audio(struct gip_client *client)
@@ -1444,9 +1461,14 @@ static int gip_process_pkt_chunked(struct gip_client *client,
 {
 	struct gip_chunk_buffer *buf = client->chunk_buf_out;
 	int err;
+	u32 len;
 
-	gip_dbg(client, "%s: offset=0x%04x, length=0x%04x\n",
-		__func__, hdr->chunk_offset, hdr->packet_length);
+	gip_dbg(client, "%s: flags=[%s %s %s], offset=0x%04x, length=0x%04x\n",
+		__func__,
+		hdr->options & GIP_OPT_CHUNK_START? "Ini":"...",
+		hdr->options & GIP_OPT_ACKNOWLEDGE? "Ack":"...",
+		hdr->options & GIP_OPT_INTERNAL? "Sys":"...",
+		hdr->chunk_offset, hdr->packet_length);
 
 	if (!buf) {
 		/* older gamepads occasionally send spurious completions */
@@ -1462,12 +1484,23 @@ static int gip_process_pkt_chunked(struct gip_client *client,
 		return -EALREADY;
 	}
 
-	if (buf->length < hdr->chunk_offset + hdr->packet_length) {
+	len = hdr->chunk_offset + hdr->packet_length;
+	if (buf->length < len) {
 		gip_err(client, "%s: buffer too small\n", __func__);
 		return -EINVAL;
 	}
 
 	if (hdr->packet_length) {
+		/*
+		 * acknowledge last non-empty chunked packet even when 
+		 * not asked in current chunk header
+		 */
+		bool last_chunk = (buf->length == len);
+		if ((hdr->options & GIP_OPT_ACKNOWLEDGE) || last_chunk) {
+			err = gip_acknowledge_pkt(client, hdr);
+			if (err)
+				return err;
+		}
 		memcpy(buf->data + hdr->chunk_offset, data, hdr->packet_length);
 		return 0;
 	}
@@ -1488,21 +1521,21 @@ static int gip_process_pkt(struct gip_client *client,
 
 	if (hdr->options & GIP_OPT_CHUNK_START) {
 		err = gip_init_chunk_buffer(client, hdr,
-					    &client->chunk_buf_out);
+					    &client->chunk_buf_out, true);
 		if (err)
 			return err;
 
 		hdr->chunk_offset = 0;
 	}
 
+	if (hdr->options & GIP_OPT_CHUNK)
+		return gip_process_pkt_chunked(client, hdr, data);
+
 	if (hdr->options & GIP_OPT_ACKNOWLEDGE) {
 		err = gip_acknowledge_pkt(client, hdr);
 		if (err)
 			return err;
 	}
-
-	if (hdr->options & GIP_OPT_CHUNK)
-		return gip_process_pkt_chunked(client, hdr, data);
 
 	return gip_dispatch_pkt(client, hdr, data, hdr->packet_length);
 }

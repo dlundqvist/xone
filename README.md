@@ -4,7 +4,7 @@
 
 <p align="center">
     <a href="https://github.com/dlundqvist/xone/releases/latest"><img src="https://img.shields.io/github/v/release/dlundqvist/xone?logo=github" alt="Release Badge"></a>
-    <a href="https://discord.gg/J7kgN5Wm"><img src="https://img.shields.io/discord/733964971842732042?label=discord&logo=discord" alt="Discord Badge"></a>
+    <a href="https://discord.gg/T3dSC3ReuS"><img src="https://img.shields.io/discord/733964971842732042?label=discord&logo=discord" alt="Discord Badge"></a>
 </p>
 
 `xone` is a Linux kernel driver for Xbox One and Xbox Series X|S accessories. It serves as a modern replacement for `xpad`, aiming to be compatible with Microsoft's *Game Input Protocol* (GIP).
@@ -227,7 +227,7 @@ You can use `evtest` and `fftest` to check the input and force feedback function
 
 ### Other problems
 
-Please join the [Discord server](https://discord.gg/J7kgN5Wm) in case of any other problems.
+Please join the [Discord server](https://discord.gg/T3dSC3ReuS) in case of any other problems.
 
 ## License
 

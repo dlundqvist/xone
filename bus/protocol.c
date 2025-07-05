@@ -409,7 +409,7 @@ static int gip_acknowledge_pkt(struct gip_client *client,
 	if ((ack->options & GIP_OPT_CHUNK) && buf)
 		pkt.remaining = cpu_to_le16(buf->length - len);
 	
-	gip_dbg(client, "%s: ACME command=0x%02x, length=0x%04x\n",
+	gip_dbg(client, "%s: ACME(host) command=0x%02x, length=0x%04x\n",
 		__func__, pkt.command, len);
 
 	return gip_send_pkt(client, &hdr, &pkt);
@@ -1046,6 +1046,9 @@ static int gip_handle_pkt_acknowledge(struct gip_client *client,
 
 	if (!buf)
 		return 0;
+
+	gip_dbg(client,"%s: ACME(device) command=0x%02x, length=0x%04x\n",
+			__func__, pkt->command, pkt->length);
 
 	/* acknowledgment for different command */
 	if (pkt->command != buf->header.command)

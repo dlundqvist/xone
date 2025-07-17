@@ -347,6 +347,12 @@ static int gip_send_pkt_simple(struct gip_client *client,
 	/* set actual length */
 	buf.length = hdr_len + hdr->packet_length;
 
+	/* debug message sent */
+	gip_dbg(client, "%s: cmd=0x%02x len=0x%04x seq=0x%02x offset=0x%04x\n",
+		__func__,
+		hdr->command, buf.length, hdr->sequence,
+		hdr->chunk_offset);
+
 	/* always fails on adapter removal */
 	err = adap->ops->submit_buffer(adap, &buf);
 	if (err)
@@ -409,7 +415,7 @@ static int gip_acknowledge_pkt(struct gip_client *client,
 	if ((ack->options & GIP_OPT_CHUNK) && buf)
 		pkt.remaining = cpu_to_le16(buf->length - len);
 	
-	gip_dbg(client, "%s: ACME command=0x%02x, length=0x%04x\n",
+	gip_dbg(client, "%s: ACME(host) command=0x%02x, length=0x%04x\n",
 		__func__, pkt.command, len);
 
 	return gip_send_pkt(client, &hdr, &pkt);
@@ -1008,12 +1014,15 @@ static int gip_parse_hid_descriptor(struct gip_client *client,
 	return 0;
 }
 
-static int gip_send_remaining_chunks(struct gip_client *client)
+static int gip_send_remaining_chunks(struct gip_client *client, u32 offset)
 {
 	struct gip_chunk_buffer *buf = client->chunk_buf_in;
 	struct gip_header hdr = buf->header;
-	u32 len = buf->length - GIP_PKT_MAX_LENGTH;
+	u32 len = buf->length - offset;
 	int err;
+
+	gip_dbg(client, "%s: sending chunk 0x%04x/0x%04x/0x%04x\n",
+		__func__, len, hdr.chunk_offset, buf->length);
 
 	while (len) {
 		/* require acknowledgment for last chunk */
@@ -1047,12 +1056,21 @@ static int gip_handle_pkt_acknowledge(struct gip_client *client,
 	if (!buf)
 		return 0;
 
+	gip_dbg(client,"%s: ACME(dev) cmd=0x%02x/0x%02x, len=0x%04x/0x%04x\n",
+			__func__, pkt->command, buf->header.command,
+			le16_to_cpu(pkt->length), buf->length);
+
 	/* acknowledgment for different command */
 	if (pkt->command != buf->header.command)
 		return 0;
 
+	/*
+	 * offset comes from the device and may be malicious or invalid
+	 * so sanitize value to prevent buffer overflow.
+	 */
 	if (le16_to_cpu(pkt->length) < buf->length)
-		return gip_send_remaining_chunks(client);
+		return gip_send_remaining_chunks(
+			client, le16_to_cpu(pkt->length));
 
 	gip_dbg(client, "%s: all chunks sent\n", __func__);
 

@@ -16,3 +16,8 @@ unload:
 
 load: unload
 	./modules_load.sh
+
+test:
+	$(MAKE) debug
+	$(MAKE) load
+	$(MAKE) clean

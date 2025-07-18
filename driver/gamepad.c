@@ -108,7 +108,7 @@ struct gip_gamepad_pkt_rumble {
 	u8 repeat;
 } __packed;
 
-typedef enum {
+typedef enum PaddleCapability {
 	PADDLE_NONE,
 	PADDLE_ELITE,
 	PADDLE_ELITE2_4X,  // Still in the same packet
@@ -224,8 +224,10 @@ static void gip_gamepad_query_paddles(struct gip_gamepad *gamepad)
 		return;
 	}
 
-	if (hardware.product != GIP_PRODUCT_ELITE_SERIES_2)
+	if (hardware.product != GIP_PRODUCT_ELITE_SERIES_2) {
+		pr_debug("%s: MS controller, no paddle support", __func__);
 		return;
+	}
 
 	pr_debug("%s: Elite Series 2\n", __func__);
 	if (hardware.version <= GIP_ELITE_SERIES_2_4X_FIRMWARE)
@@ -255,6 +257,7 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 		input_set_capability(dev, EV_KEY, KEY_RECORD);
 
 	if (gamepad->paddle_support) {
+		pr_debug("%s: Paddle support detected", __func__);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY5);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY6);
 		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY7);
@@ -403,6 +406,10 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 	 * four bytes of header off of the beginning that xpad doesn't, so all
 	 * offsets are 4 less later revisions put paddle support in the firmware
 	 * packet, check gip_gamepad_op_WTFEVER
+	 *
+	 * For 5.10 and below, the paddle data is in various locations within
+	 * the main input packet, for 5.11 and above the data is stored in a
+	 * separate packet and handeled by gip_gamepad_op_firmware().
 	 */
 
 	int report_paddles = 0, series_1 = 0;
@@ -507,10 +514,6 @@ static int gip_gamepad_probe(struct gip_client *client)
 		return err;
 
 	err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
-	if (err)
-		return err;
-
-	err = gip_gamepad_init_input(gamepad);
 	if (err)
 		return err;
 

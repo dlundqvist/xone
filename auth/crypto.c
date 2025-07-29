@@ -38,7 +38,7 @@ struct shash_desc *gip_auth_alloc_shash(const char *alg)
 
 int gip_auth_get_transcript(struct shash_desc *desc, void *transcript)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 	void *state = kzalloc(crypto_shash_descsize(desc->tfm), GFP_KERNEL);
 	int err;
 

@@ -29,3 +29,7 @@ done
 rm -rf /usr/src/xone* || true
 rm -rf /etc/modprobe.d/xone-blacklist.conf || true
 echo -e "All xone versions removed\n"
+
+[[ ${1:-} == "--no-firmware" ]] && exit 0
+rm -rf /lib/firmware/xow_dongle*
+echo -e "All dongle firmwares removed\n"

@@ -22,9 +22,9 @@ test:
 	$(MAKE) load
 	$(MAKE) clean
 
-remove:
+remove: clean
 	./uninstall.sh
 
-install: remove
+install: clean
 	./install.sh
 	./install/firmware.sh --skip-disclaimer

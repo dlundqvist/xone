@@ -29,7 +29,7 @@ log="/var/lib/dkms/xone/$version/build/make.log"
 
 if [ -n "$(dkms status xone)" ]; then
     echo -e 'Driver is already installed, uninstalling...\n'
-    ./uninstall.sh
+    ./uninstall.sh --no-firmware
 fi
 
 echo "Installing xone $version..."

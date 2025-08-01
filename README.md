@@ -123,7 +123,7 @@ cd xone
 sudo make install
 ```
 
-**NOTE:** You can use the `--debug` flag to enable debug logging.
+**NOTE:** You can use the `install-debug` target instead to enable debug logging.
 
 4. Download the firmware for the wireless dongle (optional, makefile automatically installs firmware):
 

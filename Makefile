@@ -21,3 +21,10 @@ test:
 	$(MAKE) debug
 	$(MAKE) load
 	$(MAKE) clean
+
+remove:
+	./uninstall.sh
+
+install: remove
+	./install.sh
+	./install/firmware.sh --skip-disclaimer

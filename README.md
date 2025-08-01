@@ -120,12 +120,12 @@ git clone https://github.com/dlundqvist/xone
 
 ```
 cd xone
-sudo ./install.sh
+sudo make install
 ```
 
-**NOTE:** You can use the `--release` flag to disable debug logging.
+**NOTE:** You can use the `--debug` flag to enable debug logging.
 
-4. Download the firmware for the wireless dongle:
+4. Download the firmware for the wireless dongle (optional, makefile automatically installs firmware):
 
 ```
 sudo install/firmware.sh
@@ -137,11 +137,14 @@ sudo install/firmware.sh
 
 ### Updating
 
-Make sure to completely uninstall `xone` before updating:
+Just run the install script again after pulling the newset changes from the repository.
 
 ```
-sudo ./uninstall.sh
+git pull
+sudo make install
 ```
+
+Reboot is highly suggested
 
 ### Steam Deck/SteamOS
 #### Automatic install

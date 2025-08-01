@@ -12,11 +12,6 @@ if ! [ -x "$(command -v dkms)" ]; then
     exit 1
 fi
 
-if [ -n "$(dkms status xone)" ]; then
-    echo 'Driver is already installed!' >&2
-    exit 1
-fi
-
 if [ -f /usr/local/bin/xow ]; then
     echo 'Please uninstall xow!' >&2
     exit 1
@@ -32,12 +27,17 @@ fi
 source="/usr/src/xone-$version"
 log="/var/lib/dkms/xone/$version/build/make.log"
 
+if [ -n "$(dkms status xone)" ]; then
+    echo -e 'Driver is already installed, uninstalling...\n'
+    ./uninstall.sh
+fi
+
 echo "Installing xone $version..."
 cp -r . "$source"
 find "$source" -type f \( -name dkms.conf -o -name '*.c' \) -exec sed -i "s/#VERSION#/$version/" {} +
 
-# The MAKE line in dkms.conf is required for kernels built using clang. Remove
-# it if the kernel is built using gcc - i.e. "clang" is not in the kernel
+# The MAKE line in dkms.conf is required for kernels built using clang.
+# Add it if the kernel is built using gcc - i.e. "clang" is in the kernel
 # version string.
 if [ -n "$(cat /proc/version | grep clang)" ]; then
     echo 'MAKE[0]="make V=1 LLVM=1 -C ${kernel_source_dir}'\
@@ -45,7 +45,7 @@ if [ -n "$(cat /proc/version | grep clang)" ]; then
         >> "$source/dkms.conf"
 fi
 
-if [ "${1:-}" != --release ]; then
+if [ "${1:-}" == --debug ]; then
     echo 'ccflags-y += -DDEBUG' >> "$source/Kbuild"
 fi
 
@@ -69,3 +69,5 @@ else
 
     exit 1
 fi
+
+echo -e "\nxone installation finished\n"

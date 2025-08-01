@@ -3,7 +3,7 @@
 set -eu
 
 get_version() {
-    echo $(dkms status xone | head -n 1 | tr -s ',:/' ' ' | cut -d ' ' -f 2)
+    echo $(dkms status | grep xone | head -n 1 | tr -s ',:/' ' ' | cut -d ' ' -f 2)
 }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -21,12 +21,11 @@ fi
 version=$(get_version)
 while [[ -n $version ]]; do
     echo -e "Uninstalling xone $version...\n"
-
     dkms remove -m xone -v "$version" --all
-    rm -r "/usr/src/xone-$version"
-    rm -f /etc/modprobe.d/xone-blacklist.conf
 
     version=$(get_version)
 done
 
+rm -rf /usr/src/xone* || true
+rm -rf /etc/modprobe.d/xone-blacklist.conf || true
 echo -e "All xone versions removed\n"

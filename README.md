@@ -105,6 +105,7 @@ make clean
 - DKMS
 - curl (for firmware download)
 - cabextract (for firmware extraction)
+- For SecureBoot-enabled systems see [SecureBoot dkms guide](https://github.com/dell/dkms#secure-boot)
 
 ### Guide
 

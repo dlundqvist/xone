@@ -12,6 +12,7 @@
 #include <linux/ieee80211.h>
 #include <linux/firmware.h>
 #include <linux/kernel.h>
+#include <linux/workqueue.h>
 #include <net/cfg80211.h>
 
 #include "mt76.h"
@@ -30,11 +31,13 @@
 
 #define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(30000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
-#define XONE_DONGLE_FW_REQ_TIMEOUT_MS 1000
-#define XONE_DONGLE_FW_REQ_RETRIES 3
+#define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
+#define XONE_DONGLE_FW_REQ_RETRIES 20
+#define XONE_DONGLE_FW_LOAD_RETRIES 3
 
 #define XONE_DONGLE_OFFICIAL_VENDOR 0x045e
 #define XONE_DONGLE_OFFICIAL_PRODUCT 0x02fe
+#define XONE_DONGLE_KNOCKOFF_PRODUCT1 0x02e6
 
 enum xone_dongle_queue {
 	XONE_DONGLE_QUEUE_DATA = 0x00,
@@ -91,6 +94,10 @@ struct xone_dongle {
 	wait_queue_head_t disconnect_wait;
 
 	struct workqueue_struct *event_wq;
+	struct work_struct load_fw_work;
+
+	u16 vendor;
+	u16 product;
 };
 
 static void xone_dongle_prep_packet(struct xone_dongle_client *client,
@@ -862,54 +869,81 @@ static int xone_dongle_init_urbs_out(struct xone_dongle *dongle)
 }
 
 static int xone_dongle_fw_requester(const struct firmware **fw,
-				    struct device *dev, char *fwname)
+				    struct device *dev, const char *fwname)
 {
 	int err;
 
-	dev_dbg(dev, "%s: trying to load firmware %s\n", __func__, fwname);
+	dev_info(dev, "%s: trying to load firmware %s\n", __func__, fwname);
 	for (int i = 0; i < XONE_DONGLE_FW_REQ_RETRIES; ++i) {
-		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
-		dev_dbg(dev, "%s: attempt: %d\n", __func__, i + 1);
 
+		dev_info(dev, "%s: attempt: %d\n", __func__, i + 1);
 		err = request_firmware(fw, fwname, dev);
 		if (!err)
 			return 0;
+
+		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
 	}
 
 	return err;
 }
 
-static int xone_dongle_fw_obtainer(const struct firmware **fw,
-				   struct device *dev, u16 vendor, u16 product)
+static void xone_dongle_fw_load(struct work_struct *work)
 {
+	struct xone_dongle *dongle =
+		container_of(work, struct xone_dongle, load_fw_work);
+
+	struct xone_mt76 *mt = &dongle->mt;
+	const struct firmware *fw;
 	char fwname[25];
 	int err;
 
-	bool official_dongle = (vendor == XONE_DONGLE_OFFICIAL_VENDOR &&
-				product == XONE_DONGLE_OFFICIAL_PRODUCT);
-	/*
-	 * Skip loading "exact" firmware if the official
-	 * Microsoft dongle has been detected
-	 */
-	if (!official_dongle) {
-		snprintf(fwname, 25, "xow_dongle_%04x_%04x.bin", vendor, product);
-		err = xone_dongle_fw_requester(fw, dev, fwname);
-	}
+	switch (dongle->product) {
+	case XONE_DONGLE_KNOCKOFF_PRODUCT1:
+		snprintf(fwname, 25, "xow_dongle_%04x_%04x.bin", dongle->vendor,
+			 dongle->product);
+		break;
 
-	if (err == -ENOENT || official_dongle) {
+	case XONE_DONGLE_OFFICIAL_PRODUCT:
+	default:
 		snprintf(fwname, 15, "xow_dongle.bin");
-		err = xone_dongle_fw_requester(fw, dev, fwname);
 	}
 
-	return err;
+	err = xone_dongle_fw_requester(&fw, mt->dev, fwname);
+	if (err) {
+		dev_err(mt->dev, "%s: request firmware failed: %d\n", __func__,
+			err);
+		return;
+	}
+
+	pr_info("%s: firmware requested successfully\n", __func__);
+
+	for (int i = 0; i < XONE_DONGLE_FW_LOAD_RETRIES; ++i) {
+		err = xone_mt76_load_firmware(mt, fw);
+		if (!err)
+			break;
+
+		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
+	}
+	release_firmware(fw);
+
+	if (err) {
+		dev_err(mt->dev, "%s: load firmware failed: %d\n",
+			__func__, err);
+		return;
+	}
+
+	err = xone_mt76_init_radio(mt);
+	if (err)
+		dev_err(mt->dev, "%s: init radio failed: %d\n", __func__, err);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle,
 			    const struct usb_device_id *id)
 {
-	struct xone_mt76 *mt = &dongle->mt;
-	const struct firmware *fw;
 	int err;
+
+	dongle->vendor = id->idVendor;
+	dongle->product = id->idProduct;
 
 	init_usb_anchor(&dongle->urbs_out_idle);
 	init_usb_anchor(&dongle->urbs_out_busy);
@@ -930,32 +964,9 @@ static int xone_dongle_init(struct xone_dongle *dongle,
 	if (err)
 		return err;
 
-	err = xone_dongle_fw_obtainer(&fw, mt->dev, id->idVendor, id->idProduct);
-	if (err) {
-		dev_err(mt->dev, "%s: request firmware failed: %d\n", __func__,
-			err);
-		return err;
-	}
-
-	for (int i = 0; i < XONE_DONGLE_FW_REQ_RETRIES; ++i) {
-		err = xone_mt76_load_firmware(mt, fw);
-		if (!err)
-			break;
-
-		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
-	}
-	release_firmware(fw);
-	if (err) {
-		dev_err(mt->dev, "%s: load firmware failed: %d\n",
-			__func__, err);
-		return err;
-	}
-
-	err = xone_mt76_init_radio(mt);
-	if (err)
-		dev_err(mt->dev, "%s: init radio failed: %d\n", __func__, err);
-
-	return err;
+	INIT_WORK(&dongle->load_fw_work, xone_dongle_fw_load);
+	schedule_work(&dongle->load_fw_work);
+	return 0;
 }
 
 static int xone_dongle_power_off_clients(struct xone_dongle *dongle)

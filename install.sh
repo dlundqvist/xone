@@ -24,6 +24,9 @@ else
     version=unknown
 fi
 
+# remove "v" prefix
+version=${version##v}
+
 source="/usr/src/xone-$version"
 log="/var/lib/dkms/xone/$version/build/make.log"
 

@@ -868,12 +868,12 @@ static int xone_dongle_fw_requester(const struct firmware **fw,
 
 	dev_dbg(dev, "%s: trying to load firmware %s\n", __func__, fwname);
 	for (int i = 0; i < XONE_DONGLE_FW_REQ_RETRIES; ++i) {
+		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
 		dev_dbg(dev, "%s: attempt: %d\n", __func__, i + 1);
+
 		err = request_firmware(fw, fwname, dev);
 		if (!err)
 			return 0;
-
-		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
 	}
 
 	return err;

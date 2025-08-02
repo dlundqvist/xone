@@ -37,6 +37,8 @@ if [[ ! -f $dest_file ]]; then
     echo "$firmware_hash" FW_ACC_00U.bin | sha256sum -c
     mv FW_ACC_00U.bin $dest_file
     rm driver.cab
+else
+    echo -e "xow_dongle.bin found. Skipping download\n"
 fi
 
 driver_url='https://catalog.s.download.windowsupdate.com/d/msdownload/update/driver/drvs/2015/12/20810869_8ce2975a7fbaa06bcfb0d8762a6275a1cf7c1dd3.cab'
@@ -49,6 +51,8 @@ if [[ ! -f $dest_file ]]; then
     echo "$firmware_hash" FW_ACC_00U.bin | sha256sum -c
     mv FW_ACC_00U.bin $dest_file
     rm driver.cab
+else
+    echo -e "xow_dongle_045e_02e6.bin found. Skipping download\n"
 fi
 
-echo -e "\ndongle firmware installed\n"
+echo -e "dongle firmware installed\n"

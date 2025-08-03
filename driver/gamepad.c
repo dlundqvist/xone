@@ -431,10 +431,6 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 		paddles = ((u8 *)data)[18];
 		report_paddles = 1;
 
-		// Ensure a profile is not applied, like xpad.
-		if ((len > 19) && ((u8 *)data)[19] != 0)
-			paddles = 0;
-
 	} else if (gamepad->paddle_support == PADDLE_ELITE2_4X && len > 14) {
 		/*
 		 * On the Elite Series 2 with older firmware (<5.0)
@@ -442,10 +438,6 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 		 */
 		paddles = ((u8 *)data)[14];
 		report_paddles = 1;
-
-		// Ensure a profile is not applied, like xpad.
-		if ((len > 15) && ((u8 *)data)[15] != 0)
-			paddles = 0;
 
 	} else if (gamepad->paddle_support == PADDLE_ELITE && len > 28) {
 		// On the original Elite, paddles are stored at byte 28

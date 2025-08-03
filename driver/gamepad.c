@@ -31,6 +31,14 @@
 /* button offset from end of packet */
 #define GIP_GP_BTN_SHARE_OFFSET 18
 
+/* fallback for kernels < 6.17 */
+#ifndef BTN_GRIPR
+#define BTN_GRIPR  BTN_TRIGGER_HAPPY5
+#define BTN_GRIPR2 BTN_TRIGGER_HAPPY6
+#define BTN_GRIPL  BTN_TRIGGER_HAPPY7
+#define BTN_GRIPL2 BTN_TRIGGER_HAPPY8
+#endif
+
 static const guid_t gip_gamepad_guid_share =
 	GUID_INIT(0xecddd2fe, 0xd387, 0x4294,
 		  0xbd, 0x96, 0x1a, 0x71, 0x2e, 0x3d, 0xc7, 0x7d);
@@ -258,10 +266,10 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 
 	if (gamepad->paddle_support) {
 		pr_debug("%s: Paddle support detected", __func__);
-		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY5);
-		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY6);
-		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY7);
-		input_set_capability(dev, EV_KEY, BTN_TRIGGER_HAPPY8);
+		input_set_capability(dev, EV_KEY, BTN_GRIPR);
+		input_set_capability(dev, EV_KEY, BTN_GRIPR2);
+		input_set_capability(dev, EV_KEY, BTN_GRIPL);
+		input_set_capability(dev, EV_KEY, BTN_GRIPL2);
 	}
 
 	input_set_capability(dev, EV_KEY, BTN_MODE);
@@ -355,10 +363,10 @@ static int gip_gamepad_op_firmware(struct gip_client *client, void *data,
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
 	struct input_dev *dev = gamepad->input.dev;
 
-	input_report_key(dev, BTN_TRIGGER_HAPPY5, pkt->paddles & GIP_GP_BTN_P1);
-	input_report_key(dev, BTN_TRIGGER_HAPPY6, pkt->paddles & GIP_GP_BTN_P2);
-	input_report_key(dev, BTN_TRIGGER_HAPPY7, pkt->paddles & GIP_GP_BTN_P3);
-	input_report_key(dev, BTN_TRIGGER_HAPPY8, pkt->paddles & GIP_GP_BTN_P4);
+	input_report_key(dev, BTN_GRIPR,  pkt->paddles & GIP_GP_BTN_P1);
+	input_report_key(dev, BTN_GRIPR2, pkt->paddles & GIP_GP_BTN_P2);
+	input_report_key(dev, BTN_GRIPL,  pkt->paddles & GIP_GP_BTN_P3);
+	input_report_key(dev, BTN_GRIPL2, pkt->paddles & GIP_GP_BTN_P4);
 
 	input_sync(dev);
 	return 0;
@@ -448,13 +456,13 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 
 	// Series 1 reports paddles as different buttons than newer ones
 	if (report_paddles) {
-		input_report_key(dev, BTN_TRIGGER_HAPPY5, paddles &
+		input_report_key(dev, BTN_GRIPR, paddles &
 				 (series_1 ? GIP_GP_BTN_P2 : GIP_GP_BTN_P1));
-		input_report_key(dev, BTN_TRIGGER_HAPPY6, paddles &
+		input_report_key(dev, BTN_GRIPR2, paddles &
 				 (series_1 ? GIP_GP_BTN_P4 : GIP_GP_BTN_P2));
-		input_report_key(dev, BTN_TRIGGER_HAPPY7, paddles &
+		input_report_key(dev, BTN_GRIPL, paddles &
 				 (series_1 ? GIP_GP_BTN_P1 : GIP_GP_BTN_P3));
-		input_report_key(dev, BTN_TRIGGER_HAPPY8, paddles &
+		input_report_key(dev, BTN_GRIPL2, paddles &
 				 (series_1 ? GIP_GP_BTN_P3 : GIP_GP_BTN_P4));
 	}
 

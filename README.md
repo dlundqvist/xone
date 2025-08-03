@@ -177,7 +177,7 @@ passwd deck
 properly, which would normally support Xbox 360 controllers. This is due to `xpad` also trying to handle Xbox One
 controllers, which `xone` aims to support.
 
-To fix that, there is a fork of `xpad` driver, called [`xpad-noone`](https://github.com/medusalix/xpad-noone) that
+To fix that, there is a fork of [xpad](https://github.com/paroj/xpad) driver, called [xpad-noone](https://github.com/forkymcforkface/xpad-noone) that
 has disabled support for Xbox One controllers, so it can coexist with `xone` driver. If you're using Xbox 360
 controllers, it is recommended to use it to replace the standard `xpad` driver.
 

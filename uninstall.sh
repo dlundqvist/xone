@@ -15,7 +15,7 @@ modules=$(lsmod | grep '^xone_' | cut -d ' ' -f 1 | tr '\n' ' ')
 if [ -n "$modules" ]; then
     echo "Unloading modules: $modules..."
     # shellcheck disable=SC2086
-    modprobe -r -a $modules
+    modprobe -r -a $modules || true
 fi
 
 version=$(get_version)

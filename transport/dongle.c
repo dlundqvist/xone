@@ -32,7 +32,7 @@
 #define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(30000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
-#define XONE_DONGLE_FW_REQ_RETRIES 20
+#define XONE_DONGLE_FW_REQ_RETRIES 11 // 30 seconds
 #define XONE_DONGLE_FW_LOAD_RETRIES 3
 
 #define XONE_DONGLE_OFFICIAL_VENDOR 0x045e
@@ -46,8 +46,8 @@ enum xone_dongle_queue {
 
 enum xone_dongle_fw_state {
 	XONE_DONGLE_FW_STATE_PENDING,
+	XONE_DONGLE_FW_STATE_STOP_LOADING,
 	XONE_DONGLE_FW_STATE_ERROR,
-	XONE_DONGLE_FW_STATE_LOADED,
 	XONE_DONGLE_FW_STATE_READY,
 };
 
@@ -888,12 +888,18 @@ static int xone_dongle_init_urbs_out(struct xone_dongle *dongle)
 }
 
 static int xone_dongle_fw_requester(const struct firmware **fw,
-				    struct device *dev, const char *fwname)
+				    struct xone_dongle *dongle,
+				    const char *fwname)
 {
+	struct device *dev = dongle->mt.dev;
 	int err;
 
 	dev_dbg(dev, "%s: trying to load firmware %s\n", __func__, fwname);
 	for (int i = 0; i < XONE_DONGLE_FW_REQ_RETRIES; ++i) {
+		if (dongle->fw_state == XONE_DONGLE_FW_STATE_STOP_LOADING) {
+			pr_debug("%s: Stopping firmware load on demand", __func__);
+			return 1;
+		}
 
 		dev_dbg(dev, "%s: attempt: %d\n", __func__, i + 1);
 		err = request_firmware(fw, fwname, dev);
@@ -927,7 +933,12 @@ static void xone_dongle_fw_load(struct work_struct *work)
 		snprintf(fwname, 15, "xow_dongle.bin");
 	}
 
-	err = xone_dongle_fw_requester(&fw, mt->dev, fwname);
+	err = xone_dongle_fw_requester(&fw, dongle, fwname);
+	if (dongle->fw_state == XONE_DONGLE_FW_STATE_STOP_LOADING) {
+		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
+		return;
+	}
+
 	if (err) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
 		dev_err(mt->dev, "%s: request firmware failed: %d\n", __func__,
@@ -936,53 +947,58 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	}
 	dev_dbg(mt->dev, "%s: firmware requested successfully\n", __func__);
 
-	for (int i = 0; i < XONE_DONGLE_FW_LOAD_RETRIES; ++i) {
-		err = xone_mt76_load_firmware(mt, fw);
-		if (!err)
-			break;
 
-		msleep(XONE_DONGLE_FW_REQ_TIMEOUT_MS);
-	}
+	err = xone_mt76_load_firmware(mt, fw);
 	release_firmware(fw);
-
 	if (err) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
 		dev_err(mt->dev, "%s: load firmware failed: %d\n",
 			__func__, err);
 		return;
 	}
-	dongle->fw_state = XONE_DONGLE_FW_STATE_LOADED;
+
+	err = xone_dongle_init_urbs_out(dongle);
+	if (err) {
+		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
+		return;
+	}
+
+	err = xone_dongle_init_urbs_in(dongle, XONE_MT_EP_IN_CMD,
+				       XONE_DONGLE_LEN_CMD_PKT);
+	if (err) {
+		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
+		return;
+	}
+
+	err = xone_dongle_init_urbs_in(dongle, XONE_MT_EP_IN_WLAN,
+				       XONE_DONGLE_LEN_WLAN_PKT);
+	if (err) {
+		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
+		return;
+	}
 
 	err = xone_mt76_init_radio(mt);
-	if (err)
+	if (err){
+		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
 		dev_err(mt->dev, "%s: init radio failed: %d\n", __func__, err);
-	else
-		dongle->fw_state = XONE_DONGLE_FW_STATE_READY;
+		return;
+	}
+
+	dongle->fw_state = XONE_DONGLE_FW_STATE_READY;
+
+	device_wakeup_enable(&dongle->mt.udev->dev);
+	pm_runtime_set_autosuspend_delay(&dongle->mt.udev->dev,
+					 XONE_DONGLE_SUSPEND_DELAY);
+	usb_enable_autosuspend(dongle->mt.udev);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle,
 			    const struct usb_device_id *id)
 {
-	int err;
-
 	init_usb_anchor(&dongle->urbs_out_idle);
 	init_usb_anchor(&dongle->urbs_out_busy);
 	init_usb_anchor(&dongle->urbs_in_idle);
 	init_usb_anchor(&dongle->urbs_in_busy);
-
-	err = xone_dongle_init_urbs_out(dongle);
-	if (err)
-		return err;
-
-	err = xone_dongle_init_urbs_in(dongle, XONE_MT_EP_IN_CMD,
-				       XONE_DONGLE_LEN_CMD_PKT);
-	if (err)
-		return err;
-
-	err = xone_dongle_init_urbs_in(dongle, XONE_MT_EP_IN_WLAN,
-				       XONE_DONGLE_LEN_WLAN_PKT);
-	if (err)
-		return err;
 
 	INIT_WORK(&dongle->load_fw_work, xone_dongle_fw_load);
 	schedule_work(&dongle->load_fw_work);
@@ -995,6 +1011,9 @@ static int xone_dongle_power_off_clients(struct xone_dongle *dongle)
 	int i;
 	int err = 0;
 	unsigned long flags;
+
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
+		return 0;
 
 	spin_lock_irqsave(&dongle->clients_lock, flags);
 
@@ -1031,6 +1050,17 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	destroy_workqueue(dongle->event_wq);
 	cancel_delayed_work_sync(&dongle->pairing_work);
+
+	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR) {
+		pr_debug("%s: Firmware not loaded, stopping work", __func__);
+		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
+		pr_debug("%s: Waiting for fw load work to finish", __func__);
+
+		while (dongle->fw_state == XONE_DONGLE_FW_STATE_STOP_LOADING)
+			msleep(500);
+
+		pr_debug("%s: FW loading cancelled", __func__);
+	}
 
 	for (i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++) {
 		client = dongle->clients[i];
@@ -1101,11 +1131,6 @@ static int xone_dongle_probe(struct usb_interface *intf,
 
 	/* enable USB remote wakeup and autosuspend */
 	intf->needs_remote_wakeup = true;
-	device_wakeup_enable(&dongle->mt.udev->dev);
-	pm_runtime_set_autosuspend_delay(&dongle->mt.udev->dev,
-					 XONE_DONGLE_SUSPEND_DELAY);
-	usb_enable_autosuspend(dongle->mt.udev);
-
 	return 0;
 }
 
@@ -1131,6 +1156,11 @@ static int xone_dongle_suspend(struct usb_interface *intf, pm_message_t message)
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
 	int err;
 
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY){
+		pr_debug("%s: Skipping radio suspend", __func__);
+		return err;
+	}
+
 	err = xone_dongle_power_off_clients(dongle);
 	if (err)
 		dev_err(dongle->mt.dev, "%s: power off failed: %d\n",
@@ -1149,6 +1179,10 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	struct urb *urb;
 	int err;
 
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY){
+		pr_debug("%s: Skipping radio resume", __func__);
+		return err;
+	}
 	msleep(500);
 
 	while ((urb = usb_get_from_anchor(&dongle->urbs_in_idle))) {
@@ -1159,7 +1193,6 @@ static int xone_dongle_resume(struct usb_interface *intf)
 		if (err)
 			return err;
 	}
-
 	return xone_mt76_resume_radio(&dongle->mt);
 }
 
@@ -1173,6 +1206,9 @@ static void xone_dongle_shutdown(struct usb_interface *intf)
 #endif
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
 	int err;
+
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
+		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
 
 	if (system_state == SYSTEM_RESTART)
 		return;

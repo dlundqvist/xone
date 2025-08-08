@@ -18,8 +18,8 @@ load: unload
 	./modules_load.sh
 
 test:
-	$(MAKE) debug
-	$(MAKE) load
+	$(MAKE) debug &&\
+		$(MAKE) load
 	$(MAKE) clean
 
 remove: clean

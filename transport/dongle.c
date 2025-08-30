@@ -279,6 +279,9 @@ static void xone_dongle_pairing_timeout(struct work_struct *work)
 						  pairing_work);
 	int err;
 
+	if (!dongle)
+		return;
+
 	err = xone_dongle_toggle_pairing(dongle, false);
 	if (err)
 		dev_err(dongle->mt.dev, "%s: disable pairing failed: %d\n",
@@ -1048,7 +1051,7 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	destroy_workqueue(dongle->event_wq);
-	cancel_delayed_work_sync(&dongle->pairing_work);
+	cancel_delayed_work(&dongle->pairing_work);
 
 	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR) {
 		pr_debug("%s: Firmware not loaded, stopping work", __func__);
@@ -1165,7 +1168,7 @@ static int xone_dongle_suspend(struct usb_interface *intf, pm_message_t message)
 
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
-	cancel_delayed_work_sync(&dongle->pairing_work);
+	cancel_delayed_work(&dongle->pairing_work);
 
 	return xone_mt76_suspend_radio(&dongle->mt);
 }
@@ -1176,7 +1179,7 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	struct urb *urb;
 	int err;
 
-	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY){
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY) {
 		pr_debug("%s: Skipping radio resume", __func__);
 		return 0;
 	}
@@ -1226,7 +1229,10 @@ static int xone_dongle_pre_reset(struct usb_interface *intf)
 	if (!dongle)
 		return 0;
 
-	cancel_delayed_work_sync(&dongle->pairing_work);
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
+		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
+
+	cancel_delayed_work(&dongle->pairing_work);
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
 

@@ -18,9 +18,7 @@
 - [x] Wireless devices (with Xbox Wireless Dongle)
 - [ ] Bluetooth devices (check out [`xpadneo`](https://github.com/atar-axis/xpadneo))
 
-Installing `xone` will disable the `xpad` kernel driver. If you are still using Xbox or Xbox 360 peripherals,
-you will have to install [`xpad-noone`](https://github.com/forkymcforkface/xpad-noone) as a replacement for `xpad`.
-
+Installing `xone` will disable the `xpad` kernel driver. If you are still using Xbox or Xbox 360 peripherals see [Using Xbox 360 controllers with xone](https://github.com/dlundqvist/xone#using-xbox-360-controllers-with-xone) below.
 ## Important notes
 
 This driver is still in active development. Use at your own risk!
@@ -180,6 +178,9 @@ controllers, which `xone` aims to support.
 To fix that, there is a fork of [xpad](https://github.com/paroj/xpad) driver, called [xpad-noone](https://github.com/forkymcforkface/xpad-noone) that
 has disabled support for Xbox One controllers, so it can coexist with `xone` driver. If you're using Xbox 360
 controllers, it is recommended to use it to replace the standard `xpad` driver.
+
+After installing this, make sure you comment out or remove xpad from `/etc/modprobe.d/xone-blacklist.conf`.
+You can do so with this one liner: `sudo sed -i 's/blacklist xpad/#blacklist xpad/' /etc/modprobe.d/xone-blacklist.conf`
 
 ### Installation on Steam Deck
 

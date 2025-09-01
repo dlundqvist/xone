@@ -181,16 +181,6 @@ To fix that, there is a fork of [xpad](https://github.com/paroj/xpad) driver, ca
 has disabled support for Xbox One controllers, so it can coexist with `xone` driver. If you're using Xbox 360
 controllers, it is recommended to use it to replace the standard `xpad` driver.
 
-### Installation on Steam Deck
-
-An installation script for the Steam Deck is available
-[here](https://gist.github.com/SavageCore/263a3413532bc181c9bb215c8fe6c30d). It handles all the prerequisites and other
-quirks, along with installing `xone-noone`.
-
-You can run it by executing the following command: `wget -O /tmp/bootstrap.sh
-https://gist.githubusercontent.com/SavageCore/263a3413532bc181c9bb215c8fe6c30d/raw/8cfbc292c4b55612a2ebea3227911a3c3a6ae214/bootstrap.sh &&
-sh /tmp/bootstrap.sh`
-
 ## Wireless pairing
 
 Xbox devices have to be paired to the wireless dongle. They will not automatically connect to the dongle if they have

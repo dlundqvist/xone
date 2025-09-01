@@ -26,8 +26,27 @@ mkdir xone-install
 cd xone-install || exit 1
 
 AUR_LINK="https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h="
-curl "${AUR_LINK}xone-dkms" -o PKGBUILD_XONE
-curl "${AUR_LINK}xone-dongle-firmware" -o PKGBUILD_FIRMWARE
+ITER=0
+while [[ ! -e PKGBUILD_XONE && "$ITER" -lt 5 ]]; do
+	curl "${AUR_LINK}xone-dkms" -o PKGBUILD_XONE
+	ITER=$(( ITER + 1 ))
+done
+
+if [[ $ITER -eq 5 ]]; then
+	echo "Error when downloading PKGBUILD for xone. Exiting..."
+	exit 1
+fi
+
+ITER=0
+while [[ ! -e PKGBUILD_FIRMWARE && "$ITER" -lt 5 ]]; do
+	curl "${AUR_LINK}xone-dkms" -o PKGBUILD_FIRMWARE
+	ITER=$(( ITER + 1 ))
+done
+
+if [[ $ITER -eq 5 ]]; then
+	echo "Error when downloading PKGBUILD for xone firmware. Exiting..."
+	exit 1
+fi
 
 # to ABSOLUTELY make sure we have acces when running sudo -u deck
 chown -R deck:deck .

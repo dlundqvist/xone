@@ -266,6 +266,10 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 	dev_dbg(dongle->mt.dev, "%s: enabled=%d\n", __func__, enable);
 	dongle->pairing = enable;
 
+	if (enable)
+		mod_delayed_work(system_wq, &dongle->pairing_work,
+				 XONE_DONGLE_PAIRING_TIMEOUT);
+
 err_unlock:
 	mutex_unlock(&dongle->pairing_lock);
 
@@ -508,8 +512,6 @@ static void xone_dongle_handle_event(struct work_struct *work)
 		break;
 	case XONE_DONGLE_EVT_ENABLE_PAIRING:
 		pr_debug("%s: XONE_DONGLE_EVT_ENABLE_PAIRING", __func__);
-		mod_delayed_work(system_wq, &evt->dongle->pairing_work,
-				 XONE_DONGLE_PAIRING_TIMEOUT);
 		err = xone_dongle_toggle_pairing(evt->dongle, true);
 		break;
 	case XONE_DONGLE_EVT_ENABLE_ENCRYPTION:

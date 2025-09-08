@@ -340,8 +340,7 @@ static int gip_gamepad_op_guide_button(struct gip_client *client, bool down)
 
 static int gip_gamepad_op_authenticated(struct gip_client *client)
 {
-	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
-	return gip_gamepad_init_input(gamepad);
+	return 0;
 }
 
 static int gip_gamepad_op_firmware(struct gip_client *client, void *data,
@@ -514,6 +513,10 @@ static int gip_gamepad_probe(struct gip_client *client)
 		return err;
 
 	err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
+	if (err)
+		return err;
+
+	err = gip_gamepad_init_input(gamepad);
 	if (err)
 		return err;
 

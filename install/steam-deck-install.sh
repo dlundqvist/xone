@@ -39,7 +39,7 @@ fi
 
 ITER=0
 while [[ ! -e PKGBUILD_FIRMWARE && "$ITER" -lt 5 ]]; do
-	curl "${AUR_LINK}xone-dkms" -o PKGBUILD_FIRMWARE
+	curl "${AUR_LINK}xone-dongle-firmware" -o PKGBUILD_FIRMWARE
 	ITER=$(( ITER + 1 ))
 done
 

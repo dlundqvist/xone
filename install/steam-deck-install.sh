@@ -64,8 +64,8 @@ pacman -Syu --noconfirm base-devel fakeroot glibc git \
 pacman -Syu --noconfirm --asdeps dkms w3m html-xml-utils
 
 # build and install seaprately to avoid repeated password prompts
-sudo -u deck makepkg -Cc -p PKGBUILD_XONE
-sudo -u deck makepkg -Cc -p PKGBUILD_FIRMWARE
+sudo -u deck makepkg -Ccf -p PKGBUILD_XONE
+sudo -u deck makepkg -Ccf -p PKGBUILD_FIRMWARE
 
 pacman -U --noconfirm xone-dkms-*.tar.zst
 pacman -U --noconfirm --asdeps xone-dongle-firmware-*.tar.zst

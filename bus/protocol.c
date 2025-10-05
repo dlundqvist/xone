@@ -1457,7 +1457,7 @@ static int gip_handle_pkt_audio_samples(struct gip_client *client,
 static int gip_handle_pkt_firmware(struct gip_client *client, void *data,
 				   u32 len)
 {
-	int err;
+	int err = 0;
 
 	if (down_trylock(&client->drv_lock))
 		return -EBUSY;

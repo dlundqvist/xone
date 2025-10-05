@@ -165,7 +165,7 @@ static int gip_auth_ecdh_get_pubkey(struct crypto_kpp *tfm,
 	DECLARE_CRYPTO_WAIT(wait);
 	void *privkey, *pubkey;
 	unsigned int privkey_len;
-	int err;
+	int err = 0;
 
 	privkey_len = crypto_ecdh_key_len(&key);
 	privkey = kzalloc(privkey_len, GFP_KERNEL);
@@ -173,8 +173,10 @@ static int gip_auth_ecdh_get_pubkey(struct crypto_kpp *tfm,
 		return -ENOMEM;
 
 	pubkey = kzalloc(len, GFP_KERNEL);
-	if (!pubkey)
+	if (!pubkey){
+		err = -ENOMEM;
 		goto err_free_privkey;
+	}
 
 	/* generate private key */
 	err = crypto_ecdh_encode_key(privkey, privkey_len, &key);

@@ -147,7 +147,12 @@ struct gip_adapter *gip_create_adapter(struct device *parent,
 	if (!adap)
 		return ERR_PTR(-ENOMEM);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+	adap->id = ida_alloc(&gip_adapter_ida, GFP_KERNEL);
+#else
 	adap->id = ida_simple_get(&gip_adapter_ida, 0, 0, GFP_KERNEL);
+#endif
+
 	if (adap->id < 0) {
 		err = adap->id;
 		goto err_put_device;
@@ -177,8 +182,14 @@ struct gip_adapter *gip_create_adapter(struct device *parent,
 
 err_destroy_queue:
 	destroy_workqueue(adap->clients_wq);
+
 err_remove_ida:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+	ida_free(&gip_adapter_ida, adap->id);
+#else
 	ida_simple_remove(&gip_adapter_ida, adap->id);
+#endif
+
 err_put_device:
 	put_device(&adap->dev);
 
@@ -214,7 +225,11 @@ void gip_destroy_adapter(struct gip_adapter *adap)
 		device_unregister(&client->dev);
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+	ida_free(&gip_adapter_ida, adap->id);
+#else
 	ida_simple_remove(&gip_adapter_ida, adap->id);
+#endif
 	destroy_workqueue(adap->clients_wq);
 
 	dev_dbg(&adap->dev, "%s: unregistered\n", __func__);

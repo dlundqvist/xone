@@ -28,6 +28,7 @@ done
 
 rm -rf /usr/src/xone* || true
 rm -rf /etc/modprobe.d/xone-blacklist.conf || true
+rm -rf /var/lib/dkms/xone* || true
 echo -e "All xone versions removed\n"
 
 [[ ${1:-} == "--no-firmware" ]] && exit 0

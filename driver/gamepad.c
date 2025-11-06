@@ -256,6 +256,10 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 	struct input_dev *dev = gamepad->input.dev;
 	int err;
 
+	// Exit early if input already configured
+	if (test_bit(BTN_A, dev->keybit))
+		return 0;
+
 	gamepad->supports_share = gip_has_interface(gamepad->client,
 						    &gip_gamepad_guid_share);
 	gamepad->supports_dli = gip_has_interface(gamepad->client,
@@ -348,7 +352,9 @@ static int gip_gamepad_op_guide_button(struct gip_client *client, bool down)
 
 static int gip_gamepad_op_authenticated(struct gip_client *client)
 {
-	return 0;
+	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
+
+	return gip_gamepad_init_input(gamepad);
 }
 
 static int gip_gamepad_op_firmware(struct gip_client *client, void *data,

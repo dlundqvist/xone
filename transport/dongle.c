@@ -1188,9 +1188,9 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	}
 
 	// Maybe avoid race condition
-	pr_debug("%s: Waiting %d miliseconds after resume", __func__,
-		 XONE_DONGLE_RESUME_TIMEOUT);
-	msleep(XONE_DONGLE_RESUME_TIMEOUT);
+	// pr_debug("%s: Waiting %d miliseconds after resume", __func__,
+	// 	 XONE_DONGLE_RESUME_TIMEOUT);
+	// msleep(XONE_DONGLE_RESUME_TIMEOUT);
 
 	while ((urb = usb_get_from_anchor(&dongle->urbs_in_idle))) {
 		usb_anchor_urb(urb, &dongle->urbs_in_busy);
@@ -1202,8 +1202,8 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	}
 
 	err = xone_mt76_resume_radio(&dongle->mt);
-	if (!err)
-		msleep(1000);
+	// if (!err)
+	// 	msleep(1000);
 	return err;
 }
 

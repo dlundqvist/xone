@@ -31,6 +31,7 @@
 
 #define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(30000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
+#define XONE_DONGLE_RESUME_TIMEOUT  2000
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
 #define XONE_DONGLE_FW_REQ_RETRIES 11 // 30 seconds
 #define XONE_DONGLE_FW_LOAD_RETRIES 3
@@ -1187,7 +1188,9 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	}
 
 	// Maybe avoid race condition
-	ssleep(3);
+	pr_debug("%s: Waiting %d miliseconds after resume", __func__,
+		 XONE_DONGLE_RESUME_TIMEOUT);
+	msleep(XONE_DONGLE_RESUME_TIMEOUT);
 
 	while ((urb = usb_get_from_anchor(&dongle->urbs_in_idle))) {
 		usb_anchor_urb(urb, &dongle->urbs_in_busy);

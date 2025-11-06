@@ -256,9 +256,13 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 	struct input_dev *dev = gamepad->input.dev;
 	int err;
 
+	pr_debug("%s: initialising", __func__);
+
 	// Exit early if input already configured
-	if (test_bit(BTN_A, dev->keybit))
+	if (test_bit(BTN_A, dev->keybit)) {
+		pr_debug("%s: Input already configured", __func__);
 		return 0;
+	}
 
 	gamepad->supports_share = gip_has_interface(gamepad->client,
 						    &gip_gamepad_guid_share);
@@ -483,6 +487,7 @@ static int gip_gamepad_probe(struct gip_client *client)
 	struct gip_gamepad *gamepad;
 	int err;
 
+	pr_debug("%s: Skipping radio suspend", __func__);
 	gamepad = devm_kzalloc(&client->dev, sizeof(*gamepad), GFP_KERNEL);
 	if (!gamepad)
 		return -ENOMEM;

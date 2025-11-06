@@ -494,6 +494,7 @@ static int gip_gamepad_probe(struct gip_client *client)
 
 	gamepad->client = client;
 
+	pr_debug("%s: gip_set_power_mode", __func__);
 	err = gip_set_power_mode(client, GIP_PWR_ON);
 	if (err)
 		return err;
@@ -506,31 +507,38 @@ static int gip_gamepad_probe(struct gip_client *client)
 	*/
 	if(gamepad->paddle_support == PADDLE_ELITE2_511)
 	{
+		pr_debug("%s: gip_gamepad_init_extra_data", __func__);
 		err = gip_gamepad_init_extra_data(gamepad);
 		if (err)
 			return err;
 	}
 
+	pr_debug("%s: gip_init_battery", __func__);
 	err = gip_init_battery(&gamepad->battery, client, GIP_GP_NAME);
 	if (err)
 		return err;
 
+	pr_debug("%s: gip_init_led", __func__);
 	err = gip_init_led(&gamepad->led, client);
 	if (err)
 		return err;
 
+	pr_debug("%s: gip_auth_start_handshake", __func__);
 	err = gip_auth_start_handshake(&gamepad->auth, client);
 	if (err)
 		return err;
 
+	pr_debug("%s: gip_init_input", __func__);
 	err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
 	if (err)
 		return err;
 
+	pr_debug("%s: gip_gamepad_init_input", __func__);
 	err = gip_gamepad_init_input(gamepad);
 	if (err)
 		return err;
 
+	pr_debug("%s: dev_set_drvdata", __func__);
 	dev_set_drvdata(&client->dev, gamepad);
 
 	return 0;

@@ -7,6 +7,7 @@
 #include <linux/uuid.h>
 #include <linux/timer.h>
 #include <linux/version.h>
+#include <linux/delay.h>
 
 #include "common.h"
 #include "../auth/auth.h"

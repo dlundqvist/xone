@@ -264,6 +264,8 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 		return 0;
 	}
 
+	ssleep(2);
+
 	gamepad->supports_share = gip_has_interface(gamepad->client,
 						    &gip_gamepad_guid_share);
 	gamepad->supports_dli = gip_has_interface(gamepad->client,

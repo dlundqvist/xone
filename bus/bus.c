@@ -3,6 +3,7 @@
  * Copyright (C) 2021 Severin von Wnuck-Lipinski <severinvonw@outlook.de>
  */
 
+#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/idr.h>
@@ -242,6 +243,18 @@ static void gip_register_client(struct work_struct *work)
 	struct gip_client *client = container_of(work, typeof(*client),
 						 work_register);
 	int err;
+
+	/*
+	 * Sometimes, after wakeup from sleep gamepads are unresponsive, Turns
+	 * out, it has to do something with how fast this function is performed.
+	 * Our best guess for now is that some kind of data is just not getting
+	 * there fast enough with some hubs that lose power and some timeouts
+	 * that normally asre used to init the device, aren't there to help.
+	 *
+	 * The unfortunate workaround, that at least works reliably is to add a
+	 * delay here. Since this is for human input device, one second is fine.
+	 */
+	msleep(1000);
 
 	client->dev.parent = &client->adapter->dev;
 	client->dev.type = &gip_client_type;

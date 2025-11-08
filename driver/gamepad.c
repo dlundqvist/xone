@@ -26,7 +26,7 @@
 #define GIP_ELITE_SERIES_2_510_FIRMWARE 0x050A
 
 #define GIP_GP_RUMBLE_DELAY msecs_to_jiffies(10)
-#define GIP_GP_RUMBLE_MAX 255
+#define GIP_GP_RUMBLE_MAX 100
 
 /* button offset from end of packet */
 #define GIP_GP_BTN_SHARE_OFFSET 18
@@ -170,8 +170,8 @@ static int gip_gamepad_queue_rumble(struct input_dev *dev, void *data,
 				    struct ff_effect *effect)
 {
 	struct gip_gamepad_rumble *rumble = input_get_drvdata(dev);
-	u32 mag_left = effect->u.rumble.strong_magnitude;
-	u32 mag_right = effect->u.rumble.weak_magnitude;
+	u16 mag_left = effect->u.rumble.strong_magnitude;
+	u16 mag_right = effect->u.rumble.weak_magnitude;
 	unsigned long flags;
 
 	if (effect->type != FF_RUMBLE)
@@ -179,8 +179,8 @@ static int gip_gamepad_queue_rumble(struct input_dev *dev, void *data,
 
 	spin_lock_irqsave(&rumble->lock, flags);
 
-	rumble->pkt.left = (mag_left * GIP_GP_RUMBLE_MAX + S16_MAX) / U16_MAX;
-	rumble->pkt.right = (mag_right * GIP_GP_RUMBLE_MAX + S16_MAX) / U16_MAX;
+	rumble->pkt.left = mag_left * GIP_GP_RUMBLE_MAX / U16_MAX;
+	rumble->pkt.right = mag_right * GIP_GP_RUMBLE_MAX / U16_MAX;
 
 	/* delay rumble to work around firmware bug */
 	if (!timer_pending(&rumble->timer))

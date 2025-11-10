@@ -13,6 +13,9 @@
 /* time between audio packets in ms */
 #define GIP_AUDIO_INTERVAL 8
 
+#define GIP_PKT_MIN_SERIAL_LENGTH 12
+#define GIP_PKT_MAX_SERIAL_LENGTH 32
+
 enum gip_battery_type {
 	GIP_BATT_TYPE_NONE = 0x00,
 	GIP_BATT_TYPE_STANDARD = 0x01,
@@ -79,6 +82,11 @@ struct gip_info_element {
 	u8 data[];
 };
 
+struct gip_serial_number {
+	u8 len;
+	char data[GIP_PKT_MAX_SERIAL_LENGTH + 1];
+};
+
 struct gip_audio_config {
 	enum gip_audio_format format;
 
@@ -111,6 +119,7 @@ int gip_set_led_mode(struct gip_client *client,
 		     enum gip_led_mode mode, u8 brightness);
 int gip_send_audio_samples(struct gip_client *client, void *samples);
 int gip_init_extra_data(struct gip_client *client);
+int gip_send_get_serial_number(struct gip_client *client);
 
 bool gip_has_interface(struct gip_client *client, const guid_t *guid);
 int gip_set_encryption_key(struct gip_client *client, u8 *key, int len);

@@ -85,6 +85,8 @@ struct gip_client {
 
 	struct gip_audio_config audio_config_in;
 	struct gip_audio_config audio_config_out;
+
+	struct gip_serial_number serial;
 };
 
 struct gip_driver_ops {

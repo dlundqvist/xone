@@ -42,7 +42,7 @@ enum gip_command_core {
 	GIP_CMD_LED = 0x0a,
 	GIP_CMD_HID_REPORT = 0x0b,
 	GIP_CMD_FIRMWARE = 0x0c,
-	GIP_CMD_SERIAL_NUMBER = 0x1e,
+	GIP_CMD_EXTENDED = 0x1e,
 	GIP_CMD_AUDIO_SAMPLES = 0x60,
 };
 
@@ -68,6 +68,20 @@ enum gip_audio_control {
 enum gip_audio_volume_mute {
 	GIP_AUD_VOLUME_UNMUTED = 0x04,
 	GIP_AUD_VOLUME_MIC_MUTED = 0x05,
+};
+
+enum gip_extended_command {
+	GIP_EXT_GET_CAPABILITIES = 0x00,
+	GIP_EXT_GET_TELEMETRY = 0x01,
+	GIP_EXT_GET_SERIAL_NUMBER = 0x04,
+};
+
+enum gip_extended_status {
+	GIP_EXT_STATUS_OK,
+	GIP_EXT_STATUS_NOT_SUPPORTED,
+	GIP_EXT_STATUS_NOT_READY,
+	GIP_EXT_STATUS_ACCESS_DENIED,
+	GIP_EXT_STATUS_COMMAND_FAILED,
 };
 
 struct gip_pkt_acknowledge {
@@ -157,9 +171,14 @@ struct gip_pkt_led {
 	u8 brightness;
 } __packed;
 
+struct gip_pkt_get_serial_number {
+	u8 command;
+} __packed;
+
 struct gip_pkt_serial_number {
-	u8 unknown[2];
-	char serial[14];
+	u8 command;
+	u8 status;
+	char serial[GIP_PKT_MAX_SERIAL_LENGTH];
 } __packed;
 
 struct gip_pkt_audio_samples {
@@ -569,6 +588,22 @@ int gip_set_led_mode(struct gip_client *client,
 	return gip_send_pkt(client, &hdr, &pkt);
 }
 EXPORT_SYMBOL_GPL(gip_set_led_mode);
+
+int gip_send_get_serial_number(struct gip_client *client)
+{
+	struct gip_header hdr = {
+		.command = GIP_CMD_EXTENDED,
+		.options = client->id | GIP_OPT_INTERNAL,
+		.packet_length = sizeof(struct gip_pkt_get_serial_number)
+	};
+	struct gip_pkt_get_serial_number pkt = {
+		.command = GIP_EXT_GET_SERIAL_NUMBER
+	};
+
+	gip_dbg(client, "%s: sending get serial number packet", __func__);
+	return gip_send_pkt(client, &hdr, &pkt);
+}
+EXPORT_SYMBOL_GPL(gip_send_get_serial_number);
 
 static void gip_copy_audio_samples(struct gip_client *client,
 				   void *samples, void *buf)
@@ -1164,6 +1199,42 @@ static int gip_handle_pkt_status(struct gip_client *client,
 	return err;
 }
 
+static int gip_handle_pkt_extended(struct gip_client *client, void *data,
+				   u32 len)
+{
+	struct gip_pkt_serial_number *pkt = data;
+
+	if (len > sizeof(*pkt) || len < GIP_PKT_MIN_SERIAL_LENGTH + 2)
+		return -EINVAL;
+
+	if (pkt->command != GIP_EXT_GET_SERIAL_NUMBER) {
+		gip_dbg(client, "%s: extended command not Get Serial Number\n",
+			__func__);
+		return 0;
+	}
+
+	if (pkt->status != GIP_EXT_STATUS_OK) {
+		gip_dbg(client, "%s: extended command status not OK\n",
+			__func__);
+		return 1;
+	}
+
+	if (down_trylock(&client->drv_lock))
+		return -EBUSY;
+
+	client->serial.len = len - 2;
+	memcpy(client->serial.data, pkt->serial, client->serial.len);
+	client->serial.data[client->serial.len] = '\0';
+
+	up(&client->drv_lock);
+
+	gip_dbg(client, "%s: serial number length: %u\n", __func__,
+		client->serial.len);
+	gip_dbg(client, "%s: serial number: %s\n", __func__,
+		client->serial.data);
+	return 0;
+}
+
 static int gip_handle_pkt_identify(struct gip_client *client,
 				   void *data, u32 len)
 {
@@ -1493,6 +1564,8 @@ static int gip_dispatch_pkt(struct gip_client *client,
 			return gip_handle_pkt_hid_report(client, data, len);
 		case GIP_CMD_AUDIO_SAMPLES:
 			return gip_handle_pkt_audio_samples(client, data, len);
+		case GIP_CMD_EXTENDED:
+			return gip_handle_pkt_extended(client, data, len);
 		default:
 			return 0;
 		}
@@ -1504,7 +1577,8 @@ static int gip_dispatch_pkt(struct gip_client *client,
 	case GIP_CMD_FIRMWARE:
 		return gip_handle_pkt_firmware(client, data, len);
 	default:
-		pr_debug("%s: Unknown hdr command", __func__);
+		pr_debug("%s: Unknown hdr command: 0x%02x", __func__,
+			 hdr->command);
 	}
 
 	return 0;

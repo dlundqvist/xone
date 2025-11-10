@@ -26,9 +26,6 @@
 
 #define XONE_DONGLE_MAX_CLIENTS 16
 
-/* autosuspend delay in ms */
-#define XONE_DONGLE_SUSPEND_DELAY 60000
-
 #define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(30000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
@@ -402,7 +399,6 @@ static int xone_dongle_add_client(struct xone_dongle *dongle, u8 *addr)
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 
 	atomic_inc(&dongle->client_count);
-	usb_autopm_get_interface(to_usb_interface(dongle->mt.dev));
 
 	return 0;
 
@@ -443,8 +439,6 @@ static int xone_dongle_remove_client(struct xone_dongle *dongle, u8 wcid)
 		err = xone_mt76_set_led_mode(&dongle->mt, XONE_MT_LED_OFF);
 
 	wake_up(&dongle->disconnect_wait);
-	usb_autopm_put_interface(to_usb_interface(dongle->mt.dev));
-
 	return err;
 }
 
@@ -992,9 +986,6 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	dongle->fw_state = XONE_DONGLE_FW_STATE_READY;
 
 	device_wakeup_enable(&dongle->mt.udev->dev);
-	pm_runtime_set_autosuspend_delay(&dongle->mt.udev->dev,
-					 XONE_DONGLE_SUSPEND_DELAY);
-	usb_enable_autosuspend(dongle->mt.udev);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle)
@@ -1309,7 +1300,7 @@ static struct usb_driver xone_dongle_driver = {
 #endif
 	.pre_reset = xone_dongle_pre_reset,
 	.post_reset = xone_dongle_post_reset,
-	.supports_autosuspend = true,
+	.supports_autosuspend = false,
 	.disable_hub_initiated_lpm = true,
 	.soft_unbind = true,
 };

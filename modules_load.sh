@@ -6,8 +6,7 @@ MESSAGE="Loading"
 
 mapfile -t MODULES_TMP < modules.order
 MODULES=("${MODULES_TMP[@]}")
-
-LOADED_MODULES=$(lsmod)
+LOADED_MODULES=$(lsmod | cut -d " " -f 1)
 
 if [[ $1 == "unload" ]]; then
     OPERATION="rmmod -f"
@@ -31,6 +30,9 @@ fi
 
 for module in "${MODULES[@]}"; do
     module="${module%.o}$SUFFIX"
+
+    # remove path and leave only base name
+    [[ $1 == "unload" ]] && module=${module##*/}
 
     # skip rmmod if module is not loaded
     [[ $1 == "unload" && ! "$LOADED_MODULES" =~ "$module" ]] && continue

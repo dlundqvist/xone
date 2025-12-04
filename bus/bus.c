@@ -254,7 +254,7 @@ static void gip_register_client(struct work_struct *work)
 	 * The unfortunate workaround, that at least works reliably is to add a
 	 * delay here. Since this is for human input device, one second is fine.
 	 */
-	msleep(1000);
+	msleep(700);
 
 	client->dev.parent = &client->adapter->dev;
 	client->dev.type = &gip_client_type;

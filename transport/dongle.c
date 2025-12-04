@@ -255,11 +255,6 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 	if (err)
 		goto err_unlock;
 
-	if (enable)
-		usb_autopm_get_interface(intf);
-	else
-		usb_autopm_put_interface(intf);
-
 	dev_dbg(dongle->mt.dev, "%s: enabled=%d\n", __func__, enable);
 	dongle->pairing = enable;
 

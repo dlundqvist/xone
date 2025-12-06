@@ -86,7 +86,9 @@ static int gip_headset_pcm_open(struct snd_pcm_substream *sub)
 	hw.channels_max = cfg->channels;
 	hw.buffer_bytes_max = cfg->buffer_size * GIP_HS_NUM_BUFFERS;
 	hw.period_bytes_min = cfg->buffer_size;
-	hw.period_bytes_max = cfg->buffer_size;
+	hw.period_bytes_max = cfg->buffer_size * 2;
+	hw.periods_min = 1;
+	hw.periods_max = 8;
 
 	sub->runtime->hw = hw;
 
@@ -425,6 +427,14 @@ static void gip_headset_register(struct work_struct *work)
 		return;
 	}
 
+	dev_dbg(&client->dev, "%s: init audio in.\n", __func__);
+	err = gip_init_audio_in(client);
+	if (err) {
+		dev_err(&client->dev, "%s: init audio in failed: %d\n",
+			__func__, err);
+		return;
+	}
+
 	/* start audio timer */
 	hrtimer_start(&headset->timer, 0, HRTIMER_MODE_REL);
 }
@@ -533,27 +543,21 @@ static int gip_headset_probe(struct gip_client *client)
 	INIT_DELAYED_WORK(&headset->work_power_on, gip_headset_power_on);
 	INIT_WORK(&headset->work_register, gip_headset_register);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
-	hrtimer_setup(&headset->timer, gip_headset_send_samples,
-		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	hrtimer_setup(&headset->start_audio_timer, gip_headset_start_audio,
-		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0)
 	hrtimer_init(&headset->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	headset->timer.function = gip_headset_send_samples;
 	hrtimer_init(&headset->start_audio_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	headset->start_audio_timer.function = gip_headset_start_audio;
+#else
+	hrtimer_setup(&headset->timer, gip_headset_send_samples,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_setup(&headset->start_audio_timer, gip_headset_start_audio,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 #endif
 
 	err = gip_enable_audio(client);
 	if (err)
 		return err;
-
-	err = gip_init_audio_in(client);
-	if (err) {
-		gip_disable_audio(client);
-		return err;
-	}
 
 	dev_set_drvdata(&client->dev, headset);
 

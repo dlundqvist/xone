@@ -124,6 +124,16 @@ typedef enum PaddleCapability {
 	PADDLE_ELITE2_511, // Different packet entirely.
 } PaddleCapability;
 
+struct gip_gamepad_rumble {
+	/* serializes access to rumble packet */
+	spinlock_t lock;
+	unsigned long last;
+	struct timer_list timer;
+	struct gip_gamepad_pkt_rumble pkt;
+
+	struct gip_gamepad *parent;
+};
+
 struct gip_gamepad {
 	struct gip_client *client;
 	struct gip_battery battery;
@@ -135,27 +145,20 @@ struct gip_gamepad {
 	bool supports_dli;
 	PaddleCapability paddle_support;
 
-	struct gip_gamepad_rumble {
-		/* serializes access to rumble packet */
-		spinlock_t lock;
-		unsigned long last;
-		struct timer_list timer;
-		struct gip_gamepad_pkt_rumble pkt;
-	} rumble;
+	struct gip_gamepad_rumble rumble;
 };
 
 static void gip_gamepad_send_rumble(struct timer_list *timer)
 {
 	// from_timer() has been renamed to timer_container_of() in linux 6.16
 	struct gip_gamepad_rumble *rumble =
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,16,0)
-		timer_container_of(rumble, timer, timer);
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,16,0)
 		from_timer(rumble, timer, timer);
+#else
+		timer_container_of(rumble, timer, timer);
 #endif
 
-	struct gip_gamepad *gamepad = container_of(rumble, typeof(*gamepad),
-						   rumble);
+	struct gip_gamepad *gamepad = rumble->parent;
 	unsigned long flags;
 
 	spin_lock_irqsave(&rumble->lock, flags);
@@ -204,6 +207,7 @@ static int gip_gamepad_init_rumble(struct gip_gamepad *gamepad)
 			     GIP_GP_MOTOR_RT | GIP_GP_MOTOR_LT;
 	rumble->pkt.duration = 0xff;
 	rumble->pkt.repeat = 0xeb;
+	rumble->parent = gamepad;
 	gip_gamepad_send_rumble(&rumble->timer);
 
 	input_set_capability(dev, EV_FF, FF_RUMBLE);
@@ -309,10 +313,10 @@ static int gip_gamepad_init_input(struct gip_gamepad *gamepad)
 	return 0;
 
 err_delete_timer:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
-	timer_delete_sync(&gamepad->rumble.timer);
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0)
 	del_timer_sync(&gamepad->rumble.timer);
+#else
+	timer_delete_sync(&gamepad->rumble.timer);
 #endif
 	return err;
 }
@@ -529,10 +533,10 @@ static void gip_gamepad_remove(struct gip_client *client)
 {
 	struct gip_gamepad *gamepad = dev_get_drvdata(&client->dev);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,15,0)
-	timer_delete_sync(&gamepad->rumble.timer);
-#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0)
 	del_timer_sync(&gamepad->rumble.timer);
+#else
+	timer_delete_sync(&gamepad->rumble.timer);
 #endif
 }
 

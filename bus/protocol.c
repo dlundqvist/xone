@@ -70,6 +70,26 @@ enum gip_audio_volume_mute {
 	GIP_AUD_VOLUME_MIC_MUTED = 0x05,
 };
 
+static uint gip_audio_sample_rate[] = {
+	0,
+	8000,
+	8000,
+	12000,
+	12000,
+	16000,
+	16000,
+	20000,
+	20000,
+	24000,
+	24000,
+	32000,
+	32000,
+	40000,
+	40000,
+	48000,
+	48000,
+};
+
 enum gip_extended_command {
 	GIP_EXT_GET_CAPABILITIES = 0x00,
 	GIP_EXT_GET_TELEMETRY = 0x01,
@@ -182,7 +202,7 @@ struct gip_pkt_serial_number {
 } __packed;
 
 struct gip_pkt_audio_samples {
-	__le16 length_out;
+	__le16 flow_rate;
 	u8 samples[];
 } __packed;
 
@@ -482,7 +502,7 @@ int gip_send_authenticate(struct gip_client *client, void *pkt, u32 len,
 }
 
 static int gip_set_audio_format_chat(struct gip_client *client,
-				     enum gip_audio_format_chat in_out)
+				     enum gip_audio_format in_out)
 {
 	struct gip_header hdr = {};
 	struct gip_pkt_audio_format_chat pkt = {};
@@ -525,7 +545,7 @@ int gip_suggest_audio_format(struct gip_client *client,
 	/* special handling for the chat headset */
 	if (chat)
 		err = gip_set_audio_format_chat(client,
-						GIP_AUD_FORMAT_CHAT_24KHZ);
+						GIP_AUD_FORMAT_12KHZ_STEREO);
 	else
 		err = gip_set_audio_format(client, in, out);
 
@@ -624,10 +644,10 @@ static void gip_copy_audio_samples(struct gip_client *client,
 		dest = buf + i * cfg->packet_size;
 
 		/* sequence number is always greater than zero */
-		do {
-			hdr.sequence = client->adapter->audio_sequence++;
-		} while (!hdr.sequence);
+		if (!++client->adapter->audio_sequence)
+			++client->adapter->audio_sequence;
 
+		hdr.sequence = client->adapter->audio_sequence;
 		gip_encode_header(&hdr, dest);
 		memcpy(dest + hdr_len, src, cfg->fragment_size);
 	}
@@ -785,24 +805,15 @@ static int gip_make_audio_config(struct gip_client *client,
 {
 	struct gip_header hdr = {};
 
-	switch (cfg->format) {
-	case GIP_AUD_FORMAT_16KHZ_MONO:
-		cfg->channels = 1;
-		cfg->sample_rate = 16000;
-		break;
-	case GIP_AUD_FORMAT_24KHZ_MONO:
-		cfg->channels = 1;
-		cfg->sample_rate = 24000;
-		break;
-	case GIP_AUD_FORMAT_48KHZ_STEREO:
-		cfg->channels = 2;
-		cfg->sample_rate = 48000;
-		break;
-	default:
-		gip_err(client, "%s: unknown format: 0x%02x\n",
-			__func__, cfg->format);
+	if (cfg->format <= 0 || cfg->format > GIP_AUD_FORMAT_48KHZ_STEREO) {
+		gip_err(client, "%s: unknown format: 0x%02x\n", __func__,
+			cfg->format);
 		return -ENOTSUPP;
 	}
+
+	/* even-indexed formats are stereo, uneven are mono */
+	cfg->channels = 2 - (cfg->format & 1);
+	cfg->sample_rate = gip_audio_sample_rate[cfg->format];
 
 	cfg->buffer_size = cfg->sample_rate * cfg->channels *
 			   sizeof(s16) * GIP_AUDIO_INTERVAL / MSEC_PER_SEC;
@@ -1341,7 +1352,7 @@ static int gip_handle_pkt_audio_format_chat(struct gip_client *client,
 		return -EINVAL;
 
 	/* chat headsets apparently default to 24 kHz */
-	if (pkt->in_out != GIP_AUD_FORMAT_CHAT_24KHZ ||
+	if (pkt->in_out != GIP_AUD_FORMAT_12KHZ_STEREO ||
 	    in->buffer_size || out->buffer_size)
 		return -EPROTO;
 
@@ -1515,6 +1526,7 @@ static int gip_handle_pkt_audio_samples(struct gip_client *client,
 	if (down_trylock(&client->drv_lock))
 		return -EBUSY;
 
+	u16 flow_rate = le16_to_cpu(pkt->flow_rate);
 	if (client->drv && client->drv->ops.audio_samples)
 		err = client->drv->ops.audio_samples(client, pkt->samples,
 						     len - sizeof(*pkt));

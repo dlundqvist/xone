@@ -38,7 +38,6 @@ struct shash_desc *gip_auth_alloc_shash(const char *alg)
 
 int gip_auth_get_transcript(struct shash_desc *desc, void *transcript)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 	void *state = kzalloc(crypto_shash_descsize(desc->tfm), GFP_KERNEL);
 	int err;
 
@@ -55,20 +54,6 @@ int gip_auth_get_transcript(struct shash_desc *desc, void *transcript)
 get_transcript_error:
 	kfree(state);
 	return err;
-#else
-	struct sha256_state state;
-	int err;
-
-	err = crypto_shash_export(desc, &state);
-	if (err)
-		return err;
-
-	err = crypto_shash_final(desc, transcript);
-	if (err)
-		return err;
-
-	return crypto_shash_import(desc, &state);
-#endif
 }
 
 int gip_auth_compute_prf(struct shash_desc *desc, const char *label,

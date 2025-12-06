@@ -58,14 +58,16 @@ struct xone_dongle_client {
 	struct gip_adapter *adapter;
 };
 
+enum xone_dongle_event_type {
+	XONE_DONGLE_EVT_ADD_CLIENT,
+	XONE_DONGLE_EVT_REMOVE_CLIENT,
+	XONE_DONGLE_EVT_PAIR_CLIENT,
+	XONE_DONGLE_EVT_ENABLE_PAIRING,
+	XONE_DONGLE_EVT_ENABLE_ENCRYPTION,
+};
+
 struct xone_dongle_event {
-	enum xone_dongle_event_type {
-		XONE_DONGLE_EVT_ADD_CLIENT,
-		XONE_DONGLE_EVT_REMOVE_CLIENT,
-		XONE_DONGLE_EVT_PAIR_CLIENT,
-		XONE_DONGLE_EVT_ENABLE_PAIRING,
-		XONE_DONGLE_EVT_ENABLE_ENCRYPTION,
-	} type;
+	enum xone_dongle_event_type type;
 
 	struct xone_dongle *dongle;
 	u8 address[ETH_ALEN];

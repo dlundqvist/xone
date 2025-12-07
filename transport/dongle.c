@@ -32,10 +32,6 @@
 #define XONE_DONGLE_FW_REQ_RETRIES 11 // 30 seconds
 #define XONE_DONGLE_FW_LOAD_RETRIES 3
 
-#define XONE_DONGLE_OFFICIAL_VENDOR 0x045e
-#define XONE_DONGLE_OFFICIAL_PRODUCT 0x02fe
-#define XONE_DONGLE_KNOCKOFF_PRODUCT1 0x02e6
-
 enum xone_dongle_queue {
 	XONE_DONGLE_QUEUE_DATA = 0x00,
 	XONE_DONGLE_QUEUE_AUDIO = 0x02,
@@ -912,20 +908,10 @@ static void xone_dongle_fw_load(struct work_struct *work)
 
 	struct xone_mt76 *mt = &dongle->mt;
 	const struct firmware *fw;
-	char fwname[25];
+	char fwname[21];
 	int err;
 
-	switch (dongle->product) {
-	case XONE_DONGLE_KNOCKOFF_PRODUCT1:
-		snprintf(fwname, 25, "xow_dongle_%04x_%04x.bin", dongle->vendor,
-			 dongle->product);
-		break;
-
-	case XONE_DONGLE_OFFICIAL_PRODUCT:
-	default:
-		snprintf(fwname, 15, "xow_dongle.bin");
-	}
-
+	sprintf(fwname, "xone_dongle_%04x.bin", dongle->product);
 	err = xone_dongle_fw_requester(&fw, dongle, fwname);
 	if (dongle->fw_state == XONE_DONGLE_FW_STATE_STOP_LOADING) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;

@@ -824,6 +824,9 @@ static int gip_make_audio_config(struct gip_client *client,
 	hdr.packet_length = cfg->fragment_size;
 	cfg->packet_size = gip_get_header_length(&hdr) + cfg->fragment_size;
 
+	/* set initial flow rate value */
+	cfg->flow_rate = cfg->buffer_size;
+
 	gip_dbg(client, "%s: rate=%d/%d, buffer=%d\n", __func__,
 		cfg->sample_rate, cfg->channels, cfg->buffer_size);
 
@@ -1518,6 +1521,7 @@ static int gip_handle_pkt_audio_samples(struct gip_client *client,
 					void *data, u32 len)
 {
 	struct gip_pkt_audio_samples *pkt = data;
+	struct gip_audio_config *out = &client->audio_config_out;
 	int err = 0;
 
 	if (len < sizeof(*pkt))
@@ -1526,7 +1530,10 @@ static int gip_handle_pkt_audio_samples(struct gip_client *client,
 	if (down_trylock(&client->drv_lock))
 		return -EBUSY;
 
-	u16 flow_rate = le16_to_cpu(pkt->flow_rate);
+	out->flow_rate = le16_to_cpu(pkt->flow_rate);
+	if (out->flow_rate != out->buffer_size)
+		gip_dbg(client, "%s: Unusual flow rate control -> %u", __func__, out->flow_rate);
+
 	if (client->drv && client->drv->ops.audio_samples)
 		err = client->drv->ops.audio_samples(client, pkt->samples,
 						     len - sizeof(*pkt));

@@ -105,6 +105,9 @@ struct gip_audio_config {
 	int buffer_size;
 	int fragment_size;
 	int packet_size;
+
+	/* only used for rendered audio (out) */
+	u16 flow_rate;
 };
 
 struct gip_classes {

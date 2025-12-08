@@ -32,5 +32,6 @@ rm -rf /var/lib/dkms/xone* || true
 echo -e "All xone versions removed\n"
 
 [[ ${1:-} == "--no-firmware" ]] && exit 0
-rm -rf /lib/firmware/xow_dongle*
+rm -rf /lib/firmware/xow_dongle* || true
+rm -rf /lib/firmware/xone_dongle* || true
 echo -e "All dongle firmwares removed\n"

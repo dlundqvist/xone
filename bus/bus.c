@@ -26,11 +26,8 @@ static struct device_type gip_adapter_type = {
 	.release = gip_adapter_release,
 };
 
-static int gip_client_uevent(
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-const
-#endif
-struct device *dev, struct kobj_uevent_env *env)
+static int gip_client_uevent(const struct device *dev,
+			     struct kobj_uevent_env *env)
 {
 	struct gip_client *client = to_gip_client(dev);
 	struct gip_classes *classes = client->classes;

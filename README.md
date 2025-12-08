@@ -66,7 +66,7 @@ Any issues regarding the packaging should be reported to the respective maintain
 
 ### Prerequisites
 
-- Linux 5.15+
+- Linux 6.5+
 - Linux headers
 
 ### Automagically

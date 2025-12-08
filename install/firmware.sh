@@ -12,8 +12,8 @@ if ! [ -x "$(command -v curl)" ]; then
     exit 1
 fi
 
-if ! [ -x "$(command -v cabextract)" ]; then
-    echo 'This script requires cabextract!' >&2
+if ! [ -x "$(command -v bsdtar)" ]; then
+    echo 'This script requires bsdtar!' >&2
     exit 1
 fi
 
@@ -53,7 +53,7 @@ function download_firmware() {
 
     echo -n "Downloading $firmware_name..."
     curl -s -L -o driver.cab "$2"
-    cabextract -q -F "$3" driver.cab > /dev/null 2>&1
+    bsdtar -xf driver.cab "$3" > /dev/null 2>&1
 
     echo -n " Checking sha256..."
     echo "$4" "$3" | sha256sum -c --quiet

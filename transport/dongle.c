@@ -26,7 +26,7 @@
 
 #define XONE_DONGLE_MAX_CLIENTS 16
 
-#define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(30000)
+#define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(60000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
 #define XONE_DONGLE_FW_REQ_RETRIES 11 // 30 seconds

@@ -106,7 +106,7 @@ make clean
 - Linux (kernel 5.13+ and headers)
 - DKMS
 - curl (for firmware download)
-- cabextract (for firmware extraction)
+- bsdtar (for firmware extraction)
 - For SecureBoot-enabled systems see [SecureBoot dkms guide](https://github.com/dell/dkms#secure-boot)
 
 ### Guide

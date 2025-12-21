@@ -67,8 +67,8 @@ pacman -Syu --noconfirm --asdeps dkms w3m html-xml-utils
 sudo -u deck makepkg -Ccf -p PKGBUILD_XONE
 sudo -u deck makepkg -Ccf -p PKGBUILD_FIRMWARE
 
-pacman -U --noconfirm xone-dkms-*.tar.zst
 pacman -U --noconfirm --asdeps xone-dongle-firmware-*.tar.zst
+pacman -U --noconfirm xone-dkms-*.tar.zst
 
 # Remove unneeded build dependencies
 pacman -Rcns --noconfirm w3m html-xml-utils

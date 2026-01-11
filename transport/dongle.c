@@ -18,6 +18,10 @@
 #include "mt76.h"
 #include "../bus/bus.h"
 
+ushort fw_override_pid = 0;
+MODULE_PARM_DESC(fw_override, "Use firmware for the provided product ID instead of the one detected automatically");
+module_param_named(fw_override, fw_override_pid, ushort, 0600);
+
 #define XONE_DONGLE_NUM_IN_URBS 12
 #define XONE_DONGLE_NUM_OUT_URBS 12
 
@@ -906,8 +910,14 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	const struct firmware *fw;
 	char fwname[21];
 	int err;
+	u16 fw_product = dongle->product;
 
-	sprintf(fwname, "xone_dongle_%04x.bin", dongle->product);
+	if (fw_override_pid) {
+		dev_info(mt->dev, "Firmware overriden with PID=0x%04x", fw_override_pid);
+		fw_product = fw_override_pid;
+	}
+
+	sprintf(fwname, "xone_dongle_%04x.bin", fw_product);
 	err = xone_dongle_fw_requester(&fw, dongle, fwname);
 	if (dongle->fw_state == XONE_DONGLE_FW_STATE_STOP_LOADING) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;

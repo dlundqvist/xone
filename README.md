@@ -133,8 +133,11 @@ sudo make install
 ```
 sudo install/firmware.sh
 ```
+> [!NOTE]
+> The `--skip-disclaimer` flag might be useful for scripting purposes.
 
-**NOTE:** The `--skip-disclaimer` flag might be useful for scripting purposes.
+> [!TIP]
+> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02fe.bin`
 
 5. Plug in your Xbox devices.
 

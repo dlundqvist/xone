@@ -933,7 +933,12 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	dev_dbg(mt->dev, "%s: firmware requested successfully\n", __func__);
 
 
-	err = xone_mt76_load_firmware(mt, fw);
+	for (int i = 0; i < 5; ++i) {
+		err = xone_mt76_load_firmware(mt, fw);
+		if (!err)
+			break;
+		ssleep(1);
+	}
 	release_firmware(fw);
 	if (err) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
@@ -1171,6 +1176,10 @@ static int xone_dongle_resume(struct usb_interface *intf)
 		if (err)
 			return err;
 	}
+
+	msleep(1000);
+	return xone_mt76_resume_radio(&dongle->mt);
+	msleep(500);
 	return xone_mt76_resume_radio(&dongle->mt);
 }
 

@@ -640,7 +640,7 @@ static int xone_mt76_evaluate_channels(struct xone_mt76 *mt)
 		err = xone_mt76_switch_channel(mt, chan);
 		if (err)
 			return err;
-		
+
 		/* pick the highest power channel seen first */
 		/* the last channel might not be the best one */
 		if (chan->power > pow) {

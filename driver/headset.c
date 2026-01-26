@@ -21,7 +21,7 @@
 #define GIP_HS_PID_CHAT 0x0111
 
 #define GIP_HS_MAX_RETRIES 6
-#define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(250)
+#define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(1000)
 #define GIP_HS_START_DELAY msecs_to_jiffies(500)
 
 static struct gip_vidpid GIP_HS_CHECK_AUTH_IDS[] = {
@@ -285,6 +285,10 @@ static enum hrtimer_restart gip_headset_start_audio(struct hrtimer *timer)
 	if (err)
 		dev_err(&headset->client->dev,
 			"%s: set power mode failed: %d\n", __func__, err);
+	err = gip_set_led_mode(headset->client, GIP_LED_OFF, 0);
+	if (err)
+		dev_err(&headset->client->dev,
+			"%s: set led mode failed: %d\n", __func__, err);
 	hrtimer_forward_now(timer, ms_to_ktime(GIP_HS_START_DELAY));
 
 	return HRTIMER_RESTART;

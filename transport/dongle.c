@@ -1181,8 +1181,6 @@ static int xone_dongle_resume(struct usb_interface *intf)
 
 	msleep(1000);
 	return xone_mt76_resume_radio(&dongle->mt);
-	msleep(500);
-	return xone_mt76_resume_radio(&dongle->mt);
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)

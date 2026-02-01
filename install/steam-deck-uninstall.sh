@@ -6,5 +6,3 @@ echo ""
 echo ""
 echo "Done!"
 echo "Just reboot your Deck :)"
-
-exit 0

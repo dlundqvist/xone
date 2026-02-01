@@ -1,16 +1,5 @@
 #! /usr/bin/env bash
 
-if [[ $1 == "remove" ]]; then
-	sudo pacman -Rcns xone-dkms
-
-	echo ""
-	echo ""
-	echo "Done!"
-	echo "Just reboot your Deck :)"
-
-	exit 0
-fi
-
 ro_status=$(steamos-readonly status)
 if [[ $ro_status == "enabled" ]]; then
     echo "Disabling readonly"

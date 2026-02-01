@@ -165,7 +165,7 @@ sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/dlundqvist/xone/maste
 ```
 #### Uninstall:
 ```bash
-sudo pacman -Rcns xone-dkms
+sudo sh -c "$(curl -fsSL https://raw.githubusercontent.com/dlundqvist/xone/master/install/steam-deck-uninstall.sh)"
 ```
 Optionally, lock your deck and  remove password
 ```bash

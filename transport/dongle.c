@@ -107,6 +107,8 @@ struct xone_dongle {
 	u16 product;
 };
 
+static int xone_dongle_power_off_clients(struct xone_dongle *dongle);
+
 static void xone_dongle_prep_packet(struct xone_dongle_client *client,
 				    struct sk_buff *skb,
 				    enum xone_dongle_queue queue)
@@ -315,13 +317,47 @@ static ssize_t xone_dongle_pairing_store(struct device *dev,
 	return count;
 }
 
+static ssize_t xone_dongle_poweroff_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct usb_interface *intf = to_usb_interface(dev);
+	struct xone_dongle *dongle = usb_get_intfdata(intf);
+
+	return sysfs_emit(buf, "%d\n", atomic_read(&dongle->client_count));
+}
+
+static ssize_t xone_dongle_poweroff_store(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	struct usb_interface *intf = to_usb_interface(dev);
+	struct xone_dongle *dongle = usb_get_intfdata(intf);
+	int err;
+
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
+		return -ENODEV;
+
+	err = xone_dongle_power_off_clients(dongle);
+	if (err)
+		return err;
+
+	return count;
+}
+
 static struct device_attribute xone_dongle_attr_pairing =
 	__ATTR(pairing, 0644,
 	       xone_dongle_pairing_show,
 	       xone_dongle_pairing_store);
 
+static struct device_attribute xone_dongle_attr_poweroff =
+	__ATTR(poweroff, 0644,
+	       xone_dongle_poweroff_show,
+	       xone_dongle_poweroff_store);
+
 static struct attribute *xone_dongle_attrs[] = {
 	&xone_dongle_attr_pairing.attr,
+	&xone_dongle_attr_poweroff.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(xone_dongle);

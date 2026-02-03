@@ -317,7 +317,7 @@ static ssize_t xone_dongle_pairing_store(struct device *dev,
 	return count;
 }
 
-static ssize_t xone_dongle_poweroff_show(struct device *dev,
+static ssize_t xone_dongle_clients_show(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
 {
@@ -380,13 +380,19 @@ static struct device_attribute xone_dongle_attr_pairing =
 	       xone_dongle_pairing_show,
 	       xone_dongle_pairing_store);
 
+static struct device_attribute xone_dongle_attr_clients =
+	__ATTR(clients, 0444,
+	       xone_dongle_clients_show,
+	       NULL);
+
 static struct device_attribute xone_dongle_attr_poweroff =
-	__ATTR(poweroff, 0644,
-	       xone_dongle_poweroff_show,
+	__ATTR(poweroff, 0200,
+	       NULL,
 	       xone_dongle_poweroff_store);
 
 static struct attribute *xone_dongle_attrs[] = {
 	&xone_dongle_attr_pairing.attr,
+	&xone_dongle_attr_clients.attr,
 	&xone_dongle_attr_poweroff.attr,
 	NULL,
 };

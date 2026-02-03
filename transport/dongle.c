@@ -327,18 +327,48 @@ static ssize_t xone_dongle_poweroff_show(struct device *dev,
 	return sysfs_emit(buf, "%d\n", atomic_read(&dongle->client_count));
 }
 
+static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index)
+{
+	struct xone_dongle_client *client;
+	unsigned long flags;
+	int err = 0;
+
+	if (index < 0 || index >= XONE_DONGLE_MAX_CLIENTS)
+		return -EINVAL;
+
+	spin_lock_irqsave(&dongle->clients_lock, flags);
+
+	client = dongle->clients[index];
+	if (client)
+		err = gip_power_off_adapter(client->adapter);
+	else
+		err = -ENODEV;
+
+	spin_unlock_irqrestore(&dongle->clients_lock, flags);
+
+	return err;
+}
+
 static ssize_t xone_dongle_poweroff_store(struct device *dev,
-					  struct device_attribute *attr,
-					  const char *buf, size_t count)
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
-	int err;
+	int err, val;
 
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		return -ENODEV;
 
-	err = xone_dongle_power_off_clients(dongle);
+	err = kstrtoint(buf, 10, &val);
+	if (err)
+		return err;
+
+	if (val < 0)
+		err = xone_dongle_power_off_clients(dongle);
+	else
+		err = xone_dongle_power_off_client(dongle, val);
+
 	if (err)
 		return err;
 

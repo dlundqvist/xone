@@ -1060,11 +1060,16 @@ static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index)
 
 static int xone_dongle_power_off_clients(struct xone_dongle *dongle)
 {
+	int err;
+
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		return 0;
 
-	for (int i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++)
-		xone_dongle_power_off_client(dongle, i);
+	for (int i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++){
+		err = xone_dongle_power_off_client(dongle, i);
+		if (err)
+			return err;
+	}
 
 	/* can time out if new client connects */
 	if (!wait_event_timeout(dongle->disconnect_wait,

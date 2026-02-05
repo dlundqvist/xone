@@ -107,7 +107,7 @@ struct xone_dongle {
 	u16 product;
 };
 
-static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index);
+static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index, bool silent);
 static int xone_dongle_power_off_clients(struct xone_dongle *dongle);
 
 static void xone_dongle_prep_packet(struct xone_dongle_client *client,
@@ -354,7 +354,7 @@ static ssize_t poweroff_store(struct device *dev, struct device_attribute *attr,
 	if (val == -1)
 		err = xone_dongle_power_off_clients(dongle);
 	else
-		err = xone_dongle_power_off_client(dongle, val);
+		err = xone_dongle_power_off_client(dongle, val, false);
 
 	return err ? err : count;
 }
@@ -1036,7 +1036,8 @@ static int xone_dongle_init(struct xone_dongle *dongle)
 	return 0;
 }
 
-static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index)
+static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index,
+					bool silent)
 {
 	unsigned long flags = 0;
 	int err = 0;
@@ -1048,6 +1049,8 @@ static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index)
 
 	if (dongle->clients[index])
 		err = gip_power_off_adapter(dongle->clients[index]->adapter);
+	else if (!silent)
+		err = -ENODEV;
 
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 	return err;
@@ -1055,16 +1058,11 @@ static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index)
 
 static int xone_dongle_power_off_clients(struct xone_dongle *dongle)
 {
-	int err;
-
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		return 0;
 
-	for (int i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++){
-		err = xone_dongle_power_off_client(dongle, i);
-		if (err)
-			return err;
-	}
+	for (int i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++)
+		xone_dongle_power_off_client(dongle, i, true);
 
 	/* can time out if new client connects */
 	if (!wait_event_timeout(dongle->disconnect_wait,

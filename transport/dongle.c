@@ -107,6 +107,9 @@ struct xone_dongle {
 	u16 product;
 };
 
+static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index);
+static int xone_dongle_power_off_clients(struct xone_dongle *dongle);
+
 static void xone_dongle_prep_packet(struct xone_dongle_client *client,
 				    struct sk_buff *skb,
 				    enum xone_dongle_queue queue)
@@ -285,9 +288,8 @@ static void xone_dongle_pairing_timeout(struct work_struct *work)
 			__func__, err);
 }
 
-static ssize_t xone_dongle_pairing_show(struct device *dev,
-					struct device_attribute *attr,
-					char *buf)
+static ssize_t pairing_show(struct device *dev, struct device_attribute *attr,
+			    char *buf)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
@@ -295,9 +297,8 @@ static ssize_t xone_dongle_pairing_show(struct device *dev,
 	return sysfs_emit(buf, "%d\n", dongle->pairing);
 }
 
-static ssize_t xone_dongle_pairing_store(struct device *dev,
-					 struct device_attribute *attr,
-					 const char *buf, size_t count)
+static ssize_t pairing_store(struct device *dev, struct device_attribute *attr,
+			     const char *buf, size_t count)
 {
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
@@ -315,13 +316,57 @@ static ssize_t xone_dongle_pairing_store(struct device *dev,
 	return count;
 }
 
-static struct device_attribute xone_dongle_attr_pairing =
-	__ATTR(pairing, 0644,
-	       xone_dongle_pairing_show,
-	       xone_dongle_pairing_store);
+static ssize_t active_clients_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct usb_interface *intf = to_usb_interface(dev);
+	struct xone_dongle *dongle = usb_get_intfdata(intf);
+
+	return sysfs_emit(buf, "%u\n", atomic_read(&dongle->client_count));
+}
+
+static ssize_t poweroff_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	return sysfs_emit(buf, "%s\n%s\n%s\n",
+			  "To power off clients please write:",
+			  "0-15 -> client with given index",
+			  "-1   -> all clients");
+}
+
+static ssize_t poweroff_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	struct usb_interface *intf = to_usb_interface(dev);
+	struct xone_dongle *dongle = usb_get_intfdata(intf);
+	int err, val;
+
+	if (count > 3)
+		return -E2BIG;
+
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
+		return -ENODEV;
+
+	err = kstrtoint(buf, 10, &val);
+	if (err)
+		return err;
+
+	if (val == -1)
+		err = xone_dongle_power_off_clients(dongle);
+	else
+		err = xone_dongle_power_off_client(dongle, val);
+
+	return err ? err : count;
+}
+
+DEVICE_ATTR_RW(pairing);
+DEVICE_ATTR_RO(active_clients);
+DEVICE_ATTR_RW(poweroff);
 
 static struct attribute *xone_dongle_attrs[] = {
-	&xone_dongle_attr_pairing.attr,
+	&dev_attr_pairing.attr,
+	&dev_attr_active_clients.attr,
+	&dev_attr_poweroff.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(xone_dongle);
@@ -991,32 +1036,35 @@ static int xone_dongle_init(struct xone_dongle *dongle)
 	return 0;
 }
 
+static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index)
+{
+	unsigned long flags = 0;
+	int err = 0;
+
+	if (index < 0 || index >= XONE_DONGLE_MAX_CLIENTS)
+		return -EINVAL;
+
+	spin_lock_irqsave(&dongle->clients_lock, flags);
+
+	if (dongle->clients[index])
+		err = gip_power_off_adapter(dongle->clients[index]->adapter);
+
+	spin_unlock_irqrestore(&dongle->clients_lock, flags);
+	return err;
+}
+
 static int xone_dongle_power_off_clients(struct xone_dongle *dongle)
 {
-	struct xone_dongle_client *client;
-	int i;
-	int err = 0;
-	unsigned long flags;
+	int err;
 
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		return 0;
 
-	spin_lock_irqsave(&dongle->clients_lock, flags);
-
-	for (i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++) {
-		client = dongle->clients[i];
-		if (!client)
-			continue;
-
-		err = gip_power_off_adapter(client->adapter);
+	for (int i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++){
+		err = xone_dongle_power_off_client(dongle, i);
 		if (err)
-			break;
+			return err;
 	}
-
-	spin_unlock_irqrestore(&dongle->clients_lock, flags);
-
-	if (err)
-		return err;
 
 	/* can time out if new client connects */
 	if (!wait_event_timeout(dongle->disconnect_wait,

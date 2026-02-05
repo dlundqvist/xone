@@ -229,6 +229,18 @@ You can enable (`1`) or disable (`0`) the pairing using the following command:
 echo 1 | sudo tee /sys/bus/usb/drivers/xone-dongle/*/pairing
 ```
 
+## Number of active clients and forcing poweroff
+```
+# show number of connected controllers
+cat /sys/bus/usb/drivers/xone-dongle/*/active_clients
+
+# power off selected client (possible values from 0 to 15)
+sudo tee /sys/bus/usb/drivers/xone-dongle/*/poweroff <<< 1
+
+# power off all connected clients
+sudo tee /sys/bus/usb/drivers/xone-dongle/*/poweroff <<< -1
+```
+
 ## Troubleshooting
 
 Uninstall the release version and install a debug build of `xone` (see installation guide).

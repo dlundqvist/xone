@@ -347,21 +347,16 @@ static ssize_t poweroff_store(struct device *dev, struct device_attribute *attr,
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		return -ENODEV;
 
-	err = kstrtoint(buf, 2, &val);
+	err = kstrtoint(buf, 10, &val);
 	if (err)
 		return err;
 
 	if (val == -1)
 		err = xone_dongle_power_off_clients(dongle);
-	else if (val >= 0 && val < atomic_read(&dongle->client_count))
-		err = xone_dongle_power_off_client(dongle, val);
 	else
-		err = -EINVAL;
+		err = xone_dongle_power_off_client(dongle, val);
 
-	if (err)
-		return err;
-
-	return count;
+	return err ? err : count;
 }
 
 DEVICE_ATTR_RW(pairing);

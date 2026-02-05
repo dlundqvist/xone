@@ -31,6 +31,7 @@ module_param_named(fw_override, fw_override_pid, ushort, 0600);
 #define XONE_DONGLE_MAX_CLIENTS 16
 
 #define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(60000)
+#define XONE_DONGLE_PAIR_SCAN_INTERVAL msecs_to_jiffies(2000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
 #define XONE_DONGLE_FW_REQ_RETRIES 11 // 30 seconds
@@ -91,7 +92,10 @@ struct xone_dongle {
 	/* serializes pairing changes */
 	struct mutex pairing_lock;
 	struct delayed_work pairing_work;
+	struct delayed_work pairing_scan_work;
 	bool pairing;
+	unsigned long last_wlan_rx;
+	u8 pairing_scan_idx;
 
 	/* serializes access to clients array */
 	spinlock_t clients_lock;
@@ -109,6 +113,21 @@ struct xone_dongle {
 
 static int xone_dongle_power_off_client(struct xone_dongle *dongle, int index);
 static int xone_dongle_power_off_clients(struct xone_dongle *dongle);
+
+static u8 xone_dongle_find_channel_idx(struct xone_dongle *dongle)
+{
+	int i;
+
+	if (!dongle->mt.channel)
+		return 0;
+
+	for (i = 0; i < XONE_MT_NUM_CHANNELS; i++) {
+		if (dongle->mt.channels[i].index == dongle->mt.channel->index)
+			return i;
+	}
+
+	return 0;
+}
 
 static void xone_dongle_prep_packet(struct xone_dongle_client *client,
 				    struct sk_buff *skb,
@@ -262,9 +281,16 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 	dev_dbg(dongle->mt.dev, "%s: enabled=%d\n", __func__, enable);
 	dongle->pairing = enable;
 
-	if (enable)
+	if (enable) {
+		dongle->last_wlan_rx = jiffies;
+		dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
 		mod_delayed_work(system_wq, &dongle->pairing_work,
 				 XONE_DONGLE_PAIRING_TIMEOUT);
+		mod_delayed_work(system_wq, &dongle->pairing_scan_work,
+				 XONE_DONGLE_PAIR_SCAN_INTERVAL);
+	} else {
+		cancel_delayed_work(&dongle->pairing_scan_work);
+	}
 
 err_unlock:
 	mutex_unlock(&dongle->pairing_lock);
@@ -286,6 +312,58 @@ static void xone_dongle_pairing_timeout(struct work_struct *work)
 	if (err)
 		dev_err(dongle->mt.dev, "%s: disable pairing failed: %d\n",
 			__func__, err);
+}
+
+static void xone_dongle_pairing_scan(struct work_struct *work)
+{
+	struct xone_dongle *dongle = container_of(to_delayed_work(work),
+						  typeof(*dongle),
+						  pairing_scan_work);
+	struct xone_mt76_channel *chan;
+	u8 next_idx;
+	u8 prev_chan = 0;
+	u8 next_chan = 0;
+	int err;
+
+	mutex_lock(&dongle->pairing_lock);
+
+	if (!dongle->pairing)
+		goto out_unlock;
+
+	if (time_before(jiffies, dongle->last_wlan_rx +
+				 XONE_DONGLE_PAIR_SCAN_INTERVAL))
+		goto out_resched;
+
+	dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
+	next_idx = (dongle->pairing_scan_idx + 1) % XONE_MT_NUM_CHANNELS;
+	chan = &dongle->mt.channels[next_idx];
+
+	if (dongle->mt.channel)
+		prev_chan = dongle->mt.channel->index;
+
+	next_chan = chan->index;
+
+	err = xone_mt76_switch_channel(&dongle->mt, chan);
+
+	if (err) {
+		dev_dbg(dongle->mt.dev, "%s: switch failed: %d\n",
+			__func__, err);
+	} else {
+		dongle->mt.channel = chan;
+
+		dev_dbg(dongle->mt.dev,
+			"%s: channel switch %u -> %u\n",
+			__func__, prev_chan, next_chan);
+	}
+
+	dongle->pairing_scan_idx = next_idx;
+	dongle->last_wlan_rx = jiffies;
+
+out_resched:
+	mod_delayed_work(system_wq, &dongle->pairing_scan_work,
+			 XONE_DONGLE_PAIR_SCAN_INTERVAL);
+out_unlock:
+	mutex_unlock(&dongle->pairing_lock);
 }
 
 static ssize_t pairing_show(struct device *dev, struct device_attribute *attr,
@@ -750,6 +828,7 @@ static int xone_dongle_process_wlan(struct xone_dongle *dongle,
 
 	ctl = le32_to_cpu(rxwi->ctl);
 	skb_trim(skb, FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl));
+	dongle->last_wlan_rx = jiffies;
 
 	return xone_dongle_process_frame(dongle, skb, hdr_len,
 					 FIELD_GET(MT_RXWI_CTL_WCID, ctl));
@@ -1084,6 +1163,7 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	destroy_workqueue(dongle->event_wq);
 	cancel_delayed_work(&dongle->pairing_work);
+	cancel_delayed_work(&dongle->pairing_scan_work);
 
 	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR) {
 		pr_debug("%s: Firmware not loaded, stopping work", __func__);
@@ -1142,6 +1222,7 @@ static int xone_dongle_probe(struct usb_interface *intf,
 
 	mutex_init(&dongle->pairing_lock);
 	INIT_DELAYED_WORK(&dongle->pairing_work, xone_dongle_pairing_timeout);
+	INIT_DELAYED_WORK(&dongle->pairing_scan_work, xone_dongle_pairing_scan);
 	INIT_WORK(&dongle->load_fw_work, xone_dongle_fw_load);
 	spin_lock_init(&dongle->clients_lock);
 	init_waitqueue_head(&dongle->disconnect_wait);
@@ -1201,6 +1282,7 @@ static int xone_dongle_suspend(struct usb_interface *intf, pm_message_t message)
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
 	cancel_delayed_work(&dongle->pairing_work);
+	cancel_delayed_work(&dongle->pairing_scan_work);
 
 	return xone_mt76_suspend_radio(&dongle->mt);
 }
@@ -1269,6 +1351,7 @@ static int xone_dongle_pre_reset(struct usb_interface *intf)
 		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
 
 	cancel_delayed_work(&dongle->pairing_work);
+	cancel_delayed_work(&dongle->pairing_scan_work);
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
 

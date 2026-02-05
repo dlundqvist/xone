@@ -321,8 +321,23 @@ static ssize_t active_clients_show(struct device *dev,
 {
 	struct usb_interface *intf = to_usb_interface(dev);
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
+	int half = XONE_DONGLE_MAX_CLIENTS / 2;
+	char local_buf[150] = {};
+	char temp_buf[10] = {};
 
-	return sysfs_emit(buf, "%u\n", atomic_read(&dongle->client_count));
+	sprintf(local_buf, "Active clients: %u\n", atomic_read(&dongle->client_count));
+	for (int i = 0; i < half; ++i) {
+		bool active1 = dongle->clients[i] != NULL;
+		bool active2 = dongle->clients[i + half] != NULL;
+
+		sprintf(temp_buf, "[%.2d]%s\t", i, active1 ? "*" : "");
+		strcat(local_buf, temp_buf);
+
+		sprintf(temp_buf, "[%.2d]%s\n", i + half, active2 ? "*" : "");
+		strcat(local_buf, temp_buf);
+	}
+
+	return sysfs_emit(buf, local_buf);
 }
 
 static ssize_t poweroff_show(struct device *dev, struct device_attribute *attr,

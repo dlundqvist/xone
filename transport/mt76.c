@@ -376,8 +376,8 @@ static int xone_mt76_set_wow_traffic(struct xone_mt76 *mt,
 	return xone_mt76_send_command(mt, skb, MT_CMD_WOW_FEATURE);
 }
 
-static int xone_mt76_switch_channel(struct xone_mt76 *mt,
-				    struct xone_mt76_channel *chan)
+int xone_mt76_switch_channel(struct xone_mt76 *mt,
+			     struct xone_mt76_channel *chan)
 {
 	struct sk_buff *skb;
 	struct xone_mt76_msg_switch_channel msg = {};
@@ -1042,6 +1042,11 @@ static int xone_mt76_write_beacon(struct xone_mt76 *mt, bool pair)
 	int mgmt_len = sizeof(struct ieee80211_hdr_3addr) +
 		       sizeof(mgmt.u.beacon);
 	int err;
+	u8 chan = 1;
+
+	if (mt->channel)
+		chan = mt->channel->index;
+	data[14] = chan;
 
 	skb = alloc_skb(sizeof(txwi) + mgmt_len + sizeof(data), GFP_KERNEL);
 	if (!skb)
@@ -1078,6 +1083,11 @@ static int xone_mt76_write_beacon(struct xone_mt76 *mt, bool pair)
 int xone_mt76_set_pairing(struct xone_mt76 *mt, bool enable)
 {
 	int err;
+
+	if (enable)
+		xone_mt76_write_register(mt, MT_RX_FILTR_CFG, 0x014f13);
+	else
+		xone_mt76_write_register(mt, MT_RX_FILTR_CFG, 0x017f17);
 
 	err = xone_mt76_write_beacon(mt, enable);
 	if (err)

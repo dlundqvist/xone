@@ -70,6 +70,8 @@ int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw);
 int xone_mt76_init_radio(struct xone_mt76 *mt);
 int xone_mt76_suspend_radio(struct xone_mt76 *mt);
 int xone_mt76_resume_radio(struct xone_mt76 *mt);
+int xone_mt76_switch_channel(struct xone_mt76 *mt,
+			     struct xone_mt76_channel *chan);
 int xone_mt76_set_pairing(struct xone_mt76 *mt, bool enable);
 
 int xone_mt76_pair_client(struct xone_mt76 *mt, u8 *addr);

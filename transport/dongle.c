@@ -116,12 +116,10 @@ static int xone_dongle_power_off_clients(struct xone_dongle *dongle);
 
 static u8 xone_dongle_find_channel_idx(struct xone_dongle *dongle)
 {
-	int i;
-
 	if (!dongle->mt.channel)
 		return 0;
 
-	for (i = 0; i < XONE_MT_NUM_CHANNELS; i++) {
+	for (int i = 0; i < XONE_MT_NUM_CHANNELS; i++) {
 		if (dongle->mt.channels[i].index == dongle->mt.channel->index)
 			return i;
 	}

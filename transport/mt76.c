@@ -517,9 +517,12 @@ int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 	int err;
 
 	if (xone_mt76_read_register(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG)) {
+		msleep(2000);
 		dev_dbg(mt->dev, "%s: resetting firmware...\n", __func__);
 		return xone_mt76_reset_firmware(mt);
 	}
+
+	dev_dbg(mt->dev, "%s: loading firmware...\n", __func__);
 
 	err = xone_mt76_send_firmware(mt, fw);
 	if (err)

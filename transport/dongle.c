@@ -689,8 +689,17 @@ static int xone_dongle_handle_qos_data(struct xone_dongle *dongle,
 	spin_lock_irqsave(&dongle->clients_lock, flags);
 
 	client = dongle->clients[wcid - 1];
-	if (client)
+	if (client) {
+		/*
+		 * Active data traffic is the strongest signal that we are on
+		 * the right channel. Refresh last_wlan_rx so the pairing scan
+		 * does not rotate away while a controller is mid-handshake,
+		 * complementing the client_count guard in pairing_scan.
+		 */
+		if (dongle->pairing)
+			dongle->last_wlan_rx = jiffies;
 		err = gip_process_buffer(client->adapter, skb->data, skb->len);
+	}
 
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 

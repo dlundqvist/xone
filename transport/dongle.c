@@ -1176,6 +1176,8 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 	int i;
 
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	/* cancel fw load before destroying workqueues to avoid use-after-free */
+	cancel_work_sync(&dongle->load_fw_work);
 	destroy_workqueue(dongle->event_wq);
 	cancel_delayed_work(&dongle->pairing_work);
 	cancel_delayed_work(&dongle->pairing_scan_work);

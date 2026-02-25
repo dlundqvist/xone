@@ -514,6 +514,7 @@ static int xone_mt76_reset_firmware(struct xone_mt76 *mt)
 
 int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 {
+	u32 val;
 	int err;
 
 	if (xone_mt76_read_register(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG)) {
@@ -539,6 +540,20 @@ int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 		return err;
 
 	xone_mt76_write_register(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG, 0);
+
+	/*
+	 * The warm-boot path (reset_firmware) applies an RF patch before
+	 * triggering MCU execution via load_ivb. Without this patch the RF
+	 * subsystem does not initialise correctly and the chip is silent —
+	 * it accepts all subsequent MCU commands (init_radio appears to
+	 * succeed) but never transmits beacons, so controllers cannot
+	 * discover the dongle. Apply the same patch here before load_ivb
+	 * so cold-boot firmware startup leaves the RF in the same state as
+	 * a warm reset.
+	 */
+	val = xone_mt76_read_register(mt, XONE_MT_RF_PATCH | MT_VEND_TYPE_CFG);
+	xone_mt76_write_register(mt, XONE_MT_RF_PATCH | MT_VEND_TYPE_CFG,
+				 val & ~BIT(19));
 
 	err = xone_mt76_load_ivb(mt);
 	if (err)

@@ -1244,7 +1244,18 @@ static int xone_dongle_probe(struct usb_interface *intf,
 	spin_lock_init(&dongle->clients_lock);
 	init_waitqueue_head(&dongle->disconnect_wait);
 
-	usb_reset_device(dongle->mt.udev);
+	/*
+	 * Do not call usb_reset_device() here. On cold boot the MT76 chip
+	 * disconnects from USB as a normal part of its firmware startup
+	 * sequence (inside xone_mt76_load_ivb). A preceding USB reset leaves
+	 * the XHCI port in a state where it cannot cleanly handle that
+	 * subsequent disconnect/reconnect cycle, causing the chip to
+	 * permanently disappear from the USB bus until a physical replug.
+	 *
+	 * On warm reboot the firmware survives in RAM, so the chip does not
+	 * disconnect at all and the faster xone_mt76_reset_firmware() path
+	 * is taken instead — a reset is equally unnecessary there.
+	 */
 	err = xone_dongle_init(dongle);
 	if (err) {
 		xone_dongle_destroy(dongle);

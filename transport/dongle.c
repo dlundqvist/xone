@@ -1108,8 +1108,15 @@ static void xone_dongle_fw_load(struct work_struct *work)
 		return;
 	}
 
-	err = xone_mt76_init_radio(mt);
-	if (err){
+	for (int i = 0; i < 3; i++) {
+		err = xone_mt76_init_radio(mt);
+		if (err != -ETIMEDOUT)
+			break;
+		dev_dbg(mt->dev, "%s: init radio timed out, retrying (%d/3)\n",
+			__func__, i + 1);
+		msleep(500);
+	}
+	if (err) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
 		dev_err(mt->dev, "%s: init radio failed: %d\n", __func__, err);
 		return;

@@ -786,6 +786,15 @@ static int xone_dongle_handle_button(struct xone_dongle *dongle)
 {
 	struct xone_dongle_event *evt;
 
+	/*
+	 * Refresh last_wlan_rx immediately on a physical button press so the
+	 * pairing scan does not rotate to a different channel in the narrow
+	 * window between this event being queued and toggle_pairing() being
+	 * called by the event handler.
+	 */
+	if (dongle->pairing)
+		dongle->last_wlan_rx = jiffies;
+
 	evt = xone_dongle_alloc_event(dongle, XONE_DONGLE_EVT_ENABLE_PAIRING);
 	if (!evt)
 		return -ENOMEM;

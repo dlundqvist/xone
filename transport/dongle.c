@@ -1153,6 +1153,22 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	dongle->fw_state = XONE_DONGLE_FW_STATE_READY;
 
 	device_wakeup_enable(&dongle->mt.udev->dev);
+
+	/*
+	 * xone_mt76_init_radio() ends with xone_mt76_set_pairing(false),
+	 * which sets the beacon pair flag to 0 and a restrictive RX filter.
+	 * In this state already-paired controllers cannot reconnect: they see
+	 * the beacon but are rejected by the filter.
+	 *
+	 * Enable pairing for 60 seconds so controllers present at boot or
+	 * after a replug reconnect automatically without requiring a manual
+	 * button press. The pairing timeout (XONE_DONGLE_PAIRING_TIMEOUT)
+	 * disables it again once the window expires.
+	 */
+	err = xone_dongle_toggle_pairing(dongle, true);
+	if (err)
+		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
+			__func__, err);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle)

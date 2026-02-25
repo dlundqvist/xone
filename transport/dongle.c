@@ -811,6 +811,14 @@ static int xone_dongle_process_frame(struct xone_dongle *dongle,
 	case IEEE80211_FTYPE_DATA | IEEE80211_STYPE_QOS_DATA:
 		return xone_dongle_handle_qos_data(dongle, skb, wcid);
 	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ASSOC_REQ:
+		/*
+		 * The channel scan can trigger spurious association frames
+		 * carrying multicast or all-zero source addresses (addr2).
+		 * A real controller always uses a valid unicast address.
+		 * Accepting invalid addresses exhausts the client table.
+		 */
+		if (!is_valid_ether_addr(hdr->addr2))
+			return 0;
 		return xone_dongle_handle_association(dongle, hdr->addr2);
 	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_DISASSOC:
 		return xone_dongle_handle_disassociation(dongle, wcid);

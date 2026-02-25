@@ -519,7 +519,17 @@ int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 	if (xone_mt76_read_register(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG)) {
 		msleep(2000);
 		dev_dbg(mt->dev, "%s: resetting firmware...\n", __func__);
-		return xone_mt76_reset_firmware(mt);
+		err = xone_mt76_reset_firmware(mt);
+		if (err)
+			return err;
+		/*
+		 * The MCU needs time to complete its startup sequence after the
+		 * firmware reset before it can handle the bulk USB commands sent
+		 * by xone_mt76_init_radio(). Without this delay init_radio
+		 * reliably times out (-ETIMEDOUT) on warm reboot.
+		 */
+		msleep(500);
+		return 0;
 	}
 
 	dev_dbg(mt->dev, "%s: loading firmware...\n", __func__);

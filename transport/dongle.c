@@ -328,6 +328,17 @@ static void xone_dongle_pairing_scan(struct work_struct *work)
 	if (!dongle->pairing)
 		goto out_unlock;
 
+	/*
+	 * Once a controller has sent an association request the dongle and
+	 * controller are both on the same channel. Switching channels while
+	 * a client is connecting or actively communicating breaks the GIP
+	 * handshake: the controller keeps transmitting on the old channel
+	 * while the dongle is listening on the new one. Keep the channel
+	 * stable for as long as any client slot is occupied.
+	 */
+	if (atomic_read(&dongle->client_count) > 0)
+		goto out_resched;
+
 	if (time_before(jiffies, dongle->last_wlan_rx +
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL))
 		goto out_resched;

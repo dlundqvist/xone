@@ -544,6 +544,19 @@ int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 	if (err)
 		return err;
 
+	/*
+	 * After xone_mt76_load_ivb() the MT76 chip briefly disconnects from
+	 * USB as part of its firmware startup sequence. Without a delay the
+	 * poll below can read FCE_DMA_ADDR=0x01 in the narrow window before
+	 * the kernel has marked the device as disconnected, producing a false
+	 * success. xone_mt76_init_radio() then runs against a device the
+	 * kernel considers gone and fails with -ENODEV.
+	 *
+	 * Wait long enough for the disconnect/reconnect cycle to complete so
+	 * the poll reflects the true post-startup state of the device.
+	 */
+	msleep(500);
+
 	if (!xone_mt76_poll(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG, 0x01, 0x01))
 		err = -ETIMEDOUT;
 

@@ -30,7 +30,7 @@ module_param_named(fw_override, fw_override_pid, ushort, 0600);
 
 #define XONE_DONGLE_MAX_CLIENTS 16
 
-#define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(60000)
+#define XONE_DONGLE_PAIRING_TIMEOUT 60 // seconds
 #define XONE_DONGLE_PAIR_SCAN_INTERVAL msecs_to_jiffies(2000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
@@ -250,7 +250,8 @@ static struct gip_adapter_ops xone_dongle_adapter_ops = {
 	.set_encryption_key = xone_dongle_set_encryption_key,
 };
 
-static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
+static int xone_dongle_pairing_handler(struct xone_dongle *dongle, bool enable,
+				       u8 timeout_secs)
 {
 	enum xone_mt76_led_mode led;
 	int err = 0;
@@ -283,7 +284,7 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 		dongle->last_wlan_rx = jiffies;
 		dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
 		mod_delayed_work(system_wq, &dongle->pairing_work,
-				 XONE_DONGLE_PAIRING_TIMEOUT);
+				 secs_to_jiffies(timeout_secs));
 		mod_delayed_work(system_wq, &dongle->pairing_scan_work,
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL);
 	} else {
@@ -294,6 +295,18 @@ err_unlock:
 	mutex_unlock(&dongle->pairing_lock);
 
 	return err;
+}
+
+static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
+{
+	return xone_dongle_pairing_handler(dongle, enable,
+					   XONE_DONGLE_PAIRING_TIMEOUT);
+}
+
+static int xone_dongle_enable_pairing(struct xone_dongle *dongle,
+				      u8 timeout_secs)
+{
+	return xone_dongle_pairing_handler(dongle, true, timeout_secs);
 }
 
 static void xone_dongle_pairing_timeout(struct work_struct *work)
@@ -1169,12 +1182,12 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	 * In this state already-paired controllers cannot reconnect: they see
 	 * the beacon but are rejected by the filter.
 	 *
-	 * Enable pairing for 60 seconds so controllers present at boot or
+	 * Enable pairing for 10 seconds so controllers present at boot or
 	 * after a replug reconnect automatically without requiring a manual
 	 * button press. The pairing timeout (XONE_DONGLE_PAIRING_TIMEOUT)
 	 * disables it again once the window expires.
 	 */
-	err = xone_dongle_toggle_pairing(dongle, true);
+	err = xone_dongle_enable_pairing(dongle, 10);
 	if (err)
 		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
 			__func__, err);

@@ -1248,23 +1248,17 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 	struct urb *urb;
 	int i;
 
+	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR) {
+		pr_debug("%s: Firmware not loaded, stopping work", __func__);
+		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
+	}
+
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	/* cancel fw load before destroying workqueues to avoid use-after-free */
 	cancel_work_sync(&dongle->load_fw_work);
 	destroy_workqueue(dongle->event_wq);
 	cancel_delayed_work_sync(&dongle->pairing_work);
 	cancel_delayed_work_sync(&dongle->pairing_scan_work);
-
-	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR) {
-		pr_debug("%s: Firmware not loaded, stopping work", __func__);
-		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
-		pr_debug("%s: Waiting for fw load work to finish", __func__);
-
-		while (dongle->fw_state == XONE_DONGLE_FW_STATE_STOP_LOADING)
-			msleep(500);
-
-		pr_debug("%s: FW loading cancelled", __func__);
-	}
 
 	for (i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++) {
 		client = dongle->clients[i];

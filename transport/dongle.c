@@ -30,7 +30,7 @@ module_param_named(fw_override, fw_override_pid, ushort, 0600);
 
 #define XONE_DONGLE_MAX_CLIENTS 16
 
-#define XONE_DONGLE_PAIRING_TIMEOUT msecs_to_jiffies(60000)
+#define XONE_DONGLE_PAIRING_TIMEOUT 60 // seconds
 #define XONE_DONGLE_PAIR_SCAN_INTERVAL msecs_to_jiffies(2000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
@@ -250,7 +250,8 @@ static struct gip_adapter_ops xone_dongle_adapter_ops = {
 	.set_encryption_key = xone_dongle_set_encryption_key,
 };
 
-static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
+static int xone_dongle_pairing_handler(struct xone_dongle *dongle, bool enable,
+				       u8 timeout_secs)
 {
 	enum xone_mt76_led_mode led;
 	int err = 0;
@@ -283,7 +284,7 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 		dongle->last_wlan_rx = jiffies;
 		dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
 		mod_delayed_work(system_wq, &dongle->pairing_work,
-				 XONE_DONGLE_PAIRING_TIMEOUT);
+				 secs_to_jiffies(timeout_secs));
 		mod_delayed_work(system_wq, &dongle->pairing_scan_work,
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL);
 	} else {
@@ -294,6 +295,18 @@ err_unlock:
 	mutex_unlock(&dongle->pairing_lock);
 
 	return err;
+}
+
+static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
+{
+	return xone_dongle_pairing_handler(dongle, enable,
+					   XONE_DONGLE_PAIRING_TIMEOUT);
+}
+
+static int xone_dongle_enable_pairing(struct xone_dongle *dongle,
+				      u8 timeout_secs)
+{
+	return xone_dongle_pairing_handler(dongle, true, timeout_secs);
 }
 
 static void xone_dongle_pairing_timeout(struct work_struct *work)
@@ -327,6 +340,17 @@ static void xone_dongle_pairing_scan(struct work_struct *work)
 
 	if (!dongle->pairing)
 		goto out_unlock;
+
+	/*
+	 * Once a controller has sent an association request the dongle and
+	 * controller are both on the same channel. Switching channels while
+	 * a client is connecting or actively communicating breaks the GIP
+	 * handshake: the controller keeps transmitting on the old channel
+	 * while the dongle is listening on the new one. Keep the channel
+	 * stable for as long as any client slot is occupied.
+	 */
+	if (atomic_read(&dongle->client_count) > 0)
+		goto out_resched;
 
 	if (time_before(jiffies, dongle->last_wlan_rx +
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL))
@@ -678,8 +702,17 @@ static int xone_dongle_handle_qos_data(struct xone_dongle *dongle,
 	spin_lock_irqsave(&dongle->clients_lock, flags);
 
 	client = dongle->clients[wcid - 1];
-	if (client)
+	if (client) {
+		/*
+		 * Active data traffic is the strongest signal that we are on
+		 * the right channel. Refresh last_wlan_rx so the pairing scan
+		 * does not rotate away while a controller is mid-handshake,
+		 * complementing the client_count guard in pairing_scan.
+		 */
+		if (dongle->pairing)
+			dongle->last_wlan_rx = jiffies;
 		err = gip_process_buffer(client->adapter, skb->data, skb->len);
+	}
 
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 
@@ -766,6 +799,15 @@ static int xone_dongle_handle_button(struct xone_dongle *dongle)
 {
 	struct xone_dongle_event *evt;
 
+	/*
+	 * Refresh last_wlan_rx immediately on a physical button press so the
+	 * pairing scan does not rotate to a different channel in the narrow
+	 * window between this event being queued and toggle_pairing() being
+	 * called by the event handler.
+	 */
+	if (dongle->pairing)
+		dongle->last_wlan_rx = jiffies;
+
 	evt = xone_dongle_alloc_event(dongle, XONE_DONGLE_EVT_ENABLE_PAIRING);
 	if (!evt)
 		return -ENOMEM;
@@ -811,6 +853,14 @@ static int xone_dongle_process_frame(struct xone_dongle *dongle,
 	case IEEE80211_FTYPE_DATA | IEEE80211_STYPE_QOS_DATA:
 		return xone_dongle_handle_qos_data(dongle, skb, wcid);
 	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_ASSOC_REQ:
+		/*
+		 * The channel scan can trigger spurious association frames
+		 * carrying multicast or all-zero source addresses (addr2).
+		 * A real controller always uses a valid unicast address.
+		 * Accepting invalid addresses exhausts the client table.
+		 */
+		if (!is_valid_ether_addr(hdr->addr2))
+			return 0;
 		return xone_dongle_handle_association(dongle, hdr->addr2);
 	case IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_DISASSOC:
 		return xone_dongle_handle_disassociation(dongle, wcid);
@@ -1108,8 +1158,15 @@ static void xone_dongle_fw_load(struct work_struct *work)
 		return;
 	}
 
-	err = xone_mt76_init_radio(mt);
-	if (err){
+	for (int i = 0; i < 3; i++) {
+		err = xone_mt76_init_radio(mt);
+		if (err != -ETIMEDOUT)
+			break;
+		dev_dbg(mt->dev, "%s: init radio timed out, retrying (%d/3)\n",
+			__func__, i + 1);
+		msleep(500);
+	}
+	if (err) {
 		dongle->fw_state = XONE_DONGLE_FW_STATE_ERROR;
 		dev_err(mt->dev, "%s: init radio failed: %d\n", __func__, err);
 		return;
@@ -1118,6 +1175,22 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	dongle->fw_state = XONE_DONGLE_FW_STATE_READY;
 
 	device_wakeup_enable(&dongle->mt.udev->dev);
+
+	/*
+	 * xone_mt76_init_radio() ends with xone_mt76_set_pairing(false),
+	 * which sets the beacon pair flag to 0 and a restrictive RX filter.
+	 * In this state already-paired controllers cannot reconnect: they see
+	 * the beacon but are rejected by the filter.
+	 *
+	 * Enable pairing for 10 seconds so controllers present at boot or
+	 * after a replug reconnect automatically without requiring a manual
+	 * button press. The pairing timeout (XONE_DONGLE_PAIRING_TIMEOUT)
+	 * disables it again once the window expires.
+	 */
+	err = xone_dongle_enable_pairing(dongle, 10);
+	if (err)
+		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
+			__func__, err);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle)
@@ -1176,9 +1249,11 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 	int i;
 
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	/* cancel fw load before destroying workqueues to avoid use-after-free */
+	cancel_work_sync(&dongle->load_fw_work);
 	destroy_workqueue(dongle->event_wq);
-	cancel_delayed_work(&dongle->pairing_work);
-	cancel_delayed_work(&dongle->pairing_scan_work);
+	cancel_delayed_work_sync(&dongle->pairing_work);
+	cancel_delayed_work_sync(&dongle->pairing_scan_work);
 
 	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR) {
 		pr_debug("%s: Firmware not loaded, stopping work", __func__);
@@ -1242,7 +1317,18 @@ static int xone_dongle_probe(struct usb_interface *intf,
 	spin_lock_init(&dongle->clients_lock);
 	init_waitqueue_head(&dongle->disconnect_wait);
 
-	usb_reset_device(dongle->mt.udev);
+	/*
+	 * Do not call usb_reset_device() here. On cold boot the MT76 chip
+	 * disconnects from USB as a normal part of its firmware startup
+	 * sequence (inside xone_mt76_load_ivb). A preceding USB reset leaves
+	 * the XHCI port in a state where it cannot cleanly handle that
+	 * subsequent disconnect/reconnect cycle, causing the chip to
+	 * permanently disappear from the USB bus until a physical replug.
+	 *
+	 * On warm reboot the firmware survives in RAM, so the chip does not
+	 * disconnect at all and the faster xone_mt76_reset_firmware() path
+	 * is taken instead — a reset is equally unnecessary there.
+	 */
 	err = xone_dongle_init(dongle);
 	if (err) {
 		xone_dongle_destroy(dongle);
@@ -1296,8 +1382,8 @@ static int xone_dongle_suspend(struct usb_interface *intf, pm_message_t message)
 
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
-	cancel_delayed_work(&dongle->pairing_work);
-	cancel_delayed_work(&dongle->pairing_scan_work);
+	cancel_delayed_work_sync(&dongle->pairing_work);
+	cancel_delayed_work_sync(&dongle->pairing_scan_work);
 
 	return xone_mt76_suspend_radio(&dongle->mt);
 }
@@ -1365,8 +1451,8 @@ static int xone_dongle_pre_reset(struct usb_interface *intf)
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
 
-	cancel_delayed_work(&dongle->pairing_work);
-	cancel_delayed_work(&dongle->pairing_scan_work);
+	cancel_delayed_work_sync(&dongle->pairing_work);
+	cancel_delayed_work_sync(&dongle->pairing_scan_work);
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
 

@@ -514,12 +514,23 @@ static int xone_mt76_reset_firmware(struct xone_mt76 *mt)
 
 int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 {
+	u32 val;
 	int err;
 
 	if (xone_mt76_read_register(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG)) {
 		msleep(2000);
 		dev_dbg(mt->dev, "%s: resetting firmware...\n", __func__);
-		return xone_mt76_reset_firmware(mt);
+		err = xone_mt76_reset_firmware(mt);
+		if (err)
+			return err;
+		/*
+		 * The MCU needs time to complete its startup sequence after the
+		 * firmware reset before it can handle the bulk USB commands sent
+		 * by xone_mt76_init_radio(). Without this delay init_radio
+		 * reliably times out (-ETIMEDOUT) on warm reboot.
+		 */
+		msleep(500);
+		return 0;
 	}
 
 	dev_dbg(mt->dev, "%s: loading firmware...\n", __func__);
@@ -530,9 +541,36 @@ int xone_mt76_load_firmware(struct xone_mt76 *mt, const struct firmware *fw)
 
 	xone_mt76_write_register(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG, 0);
 
+	/*
+	 * The warm-boot path (reset_firmware) applies an RF patch before
+	 * triggering MCU execution via load_ivb. Without this patch the RF
+	 * subsystem does not initialise correctly and the chip is silent —
+	 * it accepts all subsequent MCU commands (init_radio appears to
+	 * succeed) but never transmits beacons, so controllers cannot
+	 * discover the dongle. Apply the same patch here before load_ivb
+	 * so cold-boot firmware startup leaves the RF in the same state as
+	 * a warm reset.
+	 */
+	val = xone_mt76_read_register(mt, XONE_MT_RF_PATCH | MT_VEND_TYPE_CFG);
+	xone_mt76_write_register(mt, XONE_MT_RF_PATCH | MT_VEND_TYPE_CFG,
+				 val & ~BIT(19));
+
 	err = xone_mt76_load_ivb(mt);
 	if (err)
 		return err;
+
+	/*
+	 * After xone_mt76_load_ivb() the MT76 chip briefly disconnects from
+	 * USB as part of its firmware startup sequence. Without a delay the
+	 * poll below can read FCE_DMA_ADDR=0x01 in the narrow window before
+	 * the kernel has marked the device as disconnected, producing a false
+	 * success. xone_mt76_init_radio() then runs against a device the
+	 * kernel considers gone and fails with -ENODEV.
+	 *
+	 * Wait long enough for the disconnect/reconnect cycle to complete so
+	 * the poll reflects the true post-startup state of the device.
+	 */
+	msleep(500);
 
 	if (!xone_mt76_poll(mt, MT_FCE_DMA_ADDR | MT_VEND_TYPE_CFG, 0x01, 0x01))
 		err = -ETIMEDOUT;

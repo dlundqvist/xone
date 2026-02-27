@@ -284,7 +284,7 @@ static int xone_dongle_pairing_handler(struct xone_dongle *dongle, bool enable,
 		dongle->last_wlan_rx = jiffies;
 		dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
 		mod_delayed_work(system_wq, &dongle->pairing_work,
-				 secs_to_jiffies(timeout_secs));
+				 msecs_to_jiffies(timeout_secs * 1000));
 		mod_delayed_work(system_wq, &dongle->pairing_scan_work,
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL);
 	} else {

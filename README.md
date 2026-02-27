@@ -11,7 +11,7 @@
 `xpad`, aiming to be compatible with Microsoft's *Game Input Protocol* (GIP).
 
 > [!NOTE]
-> The original project is in maintance mode, please reffer to this one for updates and issues.
+> The original project is in maintance mode, please refer to this one for updates and issues.
 > 
 > Huge thanks to medusalix for all the work and creating this driver!
 

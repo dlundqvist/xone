@@ -895,6 +895,12 @@ static int xone_dongle_process_wlan(struct xone_dongle *dongle,
 	}
 
 	ctl = le32_to_cpu(rxwi->ctl);
+
+	/* drop frames where RXWI claims more data than the USB transfer
+	 * actually delivered — commonly the chip's own beacon loopback */
+	if (FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl) > skb->len)
+		return 0;
+
 	skb_trim(skb, FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl));
 
 	return xone_dongle_process_frame(dongle, skb, hdr_len,

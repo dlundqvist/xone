@@ -303,12 +303,6 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 					   XONE_DONGLE_PAIRING_TIMEOUT);
 }
 
-static int xone_dongle_enable_pairing(struct xone_dongle *dongle,
-				      u8 timeout_secs)
-{
-	return xone_dongle_pairing_handler(dongle, true, timeout_secs);
-}
-
 static void xone_dongle_pairing_timeout(struct work_struct *work)
 {
 	struct xone_dongle *dongle = container_of(to_delayed_work(work),
@@ -1182,12 +1176,13 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	 * In this state already-paired controllers cannot reconnect: they see
 	 * the beacon but are rejected by the filter.
 	 *
-	 * Enable pairing for 10 seconds so controllers present at boot or
-	 * after a replug reconnect automatically without requiring a manual
-	 * button press. The pairing timeout (XONE_DONGLE_PAIRING_TIMEOUT)
-	 * disables it again once the window expires.
+	 * Enable pairing so controllers present at boot or after a replug
+	 * reconnect automatically without requiring a manual button press.
+	 * The channel scan cycles through all 12 channels at 2 s each
+	 * (24 s per full cycle), so the timeout must be long enough for
+	 * at least two full cycles.  Use the default 60 s timeout.
 	 */
-	err = xone_dongle_enable_pairing(dongle, 10);
+	err = xone_dongle_toggle_pairing(dongle, true);
 	if (err)
 		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
 			__func__, err);

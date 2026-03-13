@@ -303,12 +303,6 @@ static int xone_dongle_toggle_pairing(struct xone_dongle *dongle, bool enable)
 					   XONE_DONGLE_PAIRING_TIMEOUT);
 }
 
-static int xone_dongle_enable_pairing(struct xone_dongle *dongle,
-				      u8 timeout_secs)
-{
-	return xone_dongle_pairing_handler(dongle, true, timeout_secs);
-}
-
 static void xone_dongle_pairing_timeout(struct work_struct *work)
 {
 	struct xone_dongle *dongle = container_of(to_delayed_work(work),
@@ -1182,12 +1176,13 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	 * In this state already-paired controllers cannot reconnect: they see
 	 * the beacon but are rejected by the filter.
 	 *
-	 * Enable pairing for 10 seconds so controllers present at boot or
-	 * after a replug reconnect automatically without requiring a manual
-	 * button press. The pairing timeout (XONE_DONGLE_PAIRING_TIMEOUT)
-	 * disables it again once the window expires.
+	 * Enable pairing so controllers present at boot or after a replug
+	 * reconnect automatically without requiring a manual button press.
+	 * The channel scan cycles through all 12 channels at 2 s each
+	 * (24 s per full cycle), so the timeout must be long enough for
+	 * at least two full cycles.  Use the default 60 s timeout.
 	 */
-	err = xone_dongle_enable_pairing(dongle, 10);
+	err = xone_dongle_toggle_pairing(dongle, true);
 	if (err)
 		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
 			__func__, err);
@@ -1479,17 +1474,62 @@ static int xone_dongle_post_reset(struct usb_interface *intf)
 static int xone_dongle_reset_resume(struct usb_interface *intf)
 {
 	struct xone_dongle *dongle = usb_get_intfdata(intf);
-	int err;
+	struct xone_dongle_client *client;
+	struct urb *urb;
+	int i;
 
 	pr_debug("%s", __func__);
 
-	err = usb_reset_device(dongle->mt.udev);
-	if (err == -EINPROGRESS) {
-		pr_debug("%s: Reset already in progress", __func__);
-		return 0;
+	/*
+	 * The kernel already reset the USB device before calling
+	 * reset_resume — a second usb_reset_device() is redundant and
+	 * can leave the XHCI port in a bad state (the same class of bug
+	 * as the former usb_reset_device() call in probe).
+	 *
+	 * Instead, clean up all stale state and reinitialize from scratch.
+	 * This also ensures old GIP adapters are destroyed so the
+	 * reconnecting controller gets a fresh input device.
+	 */
+	if (dongle->fw_state < XONE_DONGLE_FW_STATE_ERROR)
+		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
+
+	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	cancel_work_sync(&dongle->load_fw_work);
+	/*
+	 * If load_fw_work raced past the STOP_LOADING check and created
+	 * new URBs before cancel_work_sync returned, kill them now.
+	 */
+	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	drain_workqueue(dongle->event_wq);
+	cancel_delayed_work_sync(&dongle->pairing_work);
+	cancel_delayed_work_sync(&dongle->pairing_scan_work);
+
+	for (i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++) {
+		client = dongle->clients[i];
+		if (!client)
+			continue;
+		gip_destroy_adapter(client->adapter);
+		kfree(client);
+		dongle->clients[i] = NULL;
+	}
+	atomic_set(&dongle->client_count, 0);
+
+	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
+
+	while ((urb = usb_get_from_anchor(&dongle->urbs_out_idle)))
+		usb_free_urb(urb);
+
+	while ((urb = usb_get_from_anchor(&dongle->urbs_in_idle))) {
+		usb_free_coherent(urb->dev, urb->transfer_buffer_length,
+				  urb->transfer_buffer, urb->transfer_dma);
+		usb_free_urb(urb);
 	}
 
-	return err;
+	dongle->pairing = false;
+	dongle->pairing_scan_idx = 0;
+	dongle->last_wlan_rx = 0;
+
+	return xone_dongle_init(dongle);
 }
 
 static const struct usb_device_id xone_dongle_id_table[] = {

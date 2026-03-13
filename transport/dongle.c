@@ -517,8 +517,14 @@ xone_dongle_create_client(struct xone_dongle *dongle, u8 *addr)
 static int xone_dongle_add_client(struct xone_dongle *dongle, u8 *addr)
 {
 	struct xone_dongle_client *client;
-	int err;
+	int i, err;
 	unsigned long flags;
+
+	/* reject duplicate: controller already has a WCID slot */
+	for (i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++)
+		if (dongle->clients[i] &&
+		    ether_addr_equal(dongle->clients[i]->address, addr))
+			return 0;
 
 	client = xone_dongle_create_client(dongle, addr);
 	if (IS_ERR(client))
@@ -889,6 +895,12 @@ static int xone_dongle_process_wlan(struct xone_dongle *dongle,
 	}
 
 	ctl = le32_to_cpu(rxwi->ctl);
+
+	/* drop frames where RXWI claims more data than the USB transfer
+	 * actually delivered — commonly the chip's own beacon loopback */
+	if (FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl) > skb->len)
+		return 0;
+
 	skb_trim(skb, FIELD_GET(MT_RXWI_CTL_MPDU_LEN, ctl));
 
 	return xone_dongle_process_frame(dongle, skb, hdr_len,

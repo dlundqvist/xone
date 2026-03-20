@@ -11,7 +11,7 @@
 #include "common.h"
 #include "../auth/auth.h"
 
-ushort trigger_rumble_mode = 0;
+ushort trigger_rumble_mode = 2;
 MODULE_PARM_DESC(trigger_rumble_mode, "Trigger rumble mode. 0: pressure, 2: disable.");
 module_param(trigger_rumble_mode, ushort, 0644);
 

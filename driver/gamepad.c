@@ -11,8 +11,8 @@
 #include "common.h"
 #include "../auth/auth.h"
 
-ushort trigger_rumble_mode = 2;
-MODULE_PARM_DESC(trigger_rumble_mode, "Trigger rumble mode. 0: pressure, 2: disable.");
+ushort trigger_rumble_mode = 0;
+MODULE_PARM_DESC(trigger_rumble_mode, "Trigger rumble mode. 0: disable, 1: pressure.");
 module_param(trigger_rumble_mode, ushort, 0644);
 
 #define GIP_GP_NAME "Microsoft Xbox Controller"
@@ -194,8 +194,8 @@ static void gip_gamepad_send_rumble(struct timer_list *timer)
 
 	rumble->pkt.left = left_main;
 	rumble->pkt.right = right_main;
-	rumble->pkt.left_trigger = trigger_rumble_mode == 2 ? 0 : left_trigger;
-	rumble->pkt.right_trigger = trigger_rumble_mode == 2 ? 0 : right_trigger;
+	rumble->pkt.left_trigger = trigger_rumble_mode == 1 ? left_trigger : 0;
+	rumble->pkt.right_trigger = trigger_rumble_mode == 1 ? right_trigger : 0;
 
 	gip_send_rumble(gamepad->client, &rumble->pkt, sizeof(rumble->pkt));
 	rumble->last = jiffies;

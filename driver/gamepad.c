@@ -29,7 +29,7 @@ module_param(trigger_rumble_mode, ushort, 0644);
 #define GIP_ELITE_SERIES_2_4X_FIRMWARE 0x04FF
 #define GIP_ELITE_SERIES_2_510_FIRMWARE 0x050A
 
-#define GIP_GP_RUMBLE_DELAY msecs_to_jiffies(20)
+#define GIP_GP_RUMBLE_DELAY msecs_to_jiffies(10)
 #define GIP_GP_RUMBLE_TRIGGER_DELAY msecs_to_jiffies(50)
 #define GIP_GP_RUMBLE_MAX 100
 #define GIP_GP_RUMBLE_TRIGGER_MAX 100
@@ -429,7 +429,7 @@ static int gip_gamepad_op_input(struct gip_client *client, void *data, u32 len)
 	rumble->trig_pos_right = le16_to_cpu(pkt->trigger_right);
 
 	/* delay rumble to work around firmware bug */
-	if (!timer_pending(&rumble->timer))
+	if (!timer_pending(&rumble->timer) && trigger_rumble_mode == 1)
 		mod_timer(&rumble->timer, rumble->last + GIP_GP_RUMBLE_TRIGGER_DELAY);
 
 	spin_unlock_irqrestore(&rumble->lock, flags);

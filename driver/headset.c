@@ -544,10 +544,8 @@ static int gip_headset_probe(struct gip_client *client)
 	INIT_WORK(&headset->work_register, gip_headset_register);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0)
-	hrtimer_init(&headset->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	headset->timer.function = gip_headset_send_samples;
-	hrtimer_init(&headset->start_audio_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	headset->start_audio_timer.function = gip_headset_start_audio;
+	hrtimer_setup(&headset->timer, gip_headset_send_samples, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_setup(&headset->start_audio_timer, gip_headset_start_audio, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 #else
 	hrtimer_setup(&headset->timer, gip_headset_send_samples,
 		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);

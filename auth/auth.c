@@ -595,8 +595,27 @@ int gip_auth_process_pkt(struct gip_auth *auth, void *data, u32 len)
 	if (!auth->client)
 		return -ENODEV;
 
-	if (len < sizeof(*hdr))
-		return -EINVAL;
+	if (len < sizeof(*hdr)) {
+		int err;
+
+		if (auth->auth_skipped)
+			return 0;
+
+		if (((u8 *)data)[0] != GIP_AUTH_CTX_HANDSHAKE)
+			return -EINVAL;
+
+		err = gip_auth_send_complete(auth->client);
+		if (err)
+			return err;
+		{
+			u8 zero_key[GIP_AUTH_SESSION_KEY_LEN] = {0};
+
+			gip_set_encryption_key(auth->client, zero_key,
+					       sizeof(zero_key));
+		}
+		auth->auth_skipped = true;
+		return 0;
+	}
 
 	if (hdr->error)
 		return -EPROTO;

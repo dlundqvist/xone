@@ -43,6 +43,8 @@ struct gip_auth {
 
 	u8 pms[GIP_AUTH_SECRET_LEN];
 	u8 master_secret[GIP_AUTH_SECRET_LEN];
+
+	bool auth_skipped;
 };
 
 int gip_auth_send_complete(struct gip_client *client);

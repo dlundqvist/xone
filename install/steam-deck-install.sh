@@ -56,7 +56,8 @@ echo ""
 echo "Don't worry about \"error: command failed to execute correctly\""
 echo ""
 
-linux=$(pacman -Qsq linux-neptune | grep -e "[0-9]$" | tail -n 1)
+# Package for the running kernel (grep fallback misses variants like -drm-exec)
+linux=$(cat "/usr/lib/modules/$(uname -r)/pkgbase" 2>/dev/null || pacman -Qsq linux-neptune | grep -e "[0-9]$" | tail -n 1)
 pacman -Syu --noconfirm base-devel fakeroot glibc git \
     "$linux" "$linux-headers" linux-api-headers
 

@@ -37,6 +37,11 @@ module_param_named(fw_override, fw_override_pid, ushort, 0600);
 #define XONE_DONGLE_FW_REQ_RETRIES 11 // 30 seconds
 #define XONE_DONGLE_FW_LOAD_RETRIES 3
 
+/* system_wq is deprecated in favor of system_dfl_wq in >= v6.17 */
+#ifndef system_dfl_wq
+#define system_dfl_wq	system_wq
+#endif
+
 enum xone_dongle_queue {
 	XONE_DONGLE_QUEUE_DATA = 0x00,
 	XONE_DONGLE_QUEUE_AUDIO = 0x02,
@@ -283,9 +288,9 @@ static int xone_dongle_pairing_handler(struct xone_dongle *dongle, bool enable,
 	if (enable) {
 		dongle->last_wlan_rx = jiffies;
 		dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
-		mod_delayed_work(system_wq, &dongle->pairing_work,
+		mod_delayed_work(system_dfl_wq, &dongle->pairing_work,
 				 msecs_to_jiffies(timeout_secs * 1000));
-		mod_delayed_work(system_wq, &dongle->pairing_scan_work,
+		mod_delayed_work(system_dfl_wq, &dongle->pairing_scan_work,
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL);
 	} else {
 		cancel_delayed_work(&dongle->pairing_scan_work);
@@ -375,7 +380,7 @@ static void xone_dongle_pairing_scan(struct work_struct *work)
 	dongle->last_wlan_rx = jiffies;
 
 out_resched:
-	mod_delayed_work(system_wq, &dongle->pairing_scan_work,
+	mod_delayed_work(system_dfl_wq, &dongle->pairing_scan_work,
 			 XONE_DONGLE_PAIR_SCAN_INTERVAL);
 out_unlock:
 	mutex_unlock(&dongle->pairing_lock);

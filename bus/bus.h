@@ -56,6 +56,7 @@ struct gip_adapter {
 	spinlock_t send_lock;
 
 	u8 data_sequence;
+  u8 auth_sequence;
 	u8 audio_sequence;
 };
 

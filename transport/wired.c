@@ -483,7 +483,9 @@ static int xone_wired_probe(struct usb_interface *intf,
 	wired->udev = interface_to_usbdev(intf);
 
 	/* newer devices require a reset after system sleep */
-	usb_reset_device(wired->udev);
+	/* GameSir dongles re-enumerate on reset, which makes probing loop forever */
+	if (le16_to_cpu(wired->udev->descriptor.idVendor) != 0x3537)
+		usb_reset_device(wired->udev);
 
 	err = xone_wired_init_data_port(wired, intf);
 	if (err)

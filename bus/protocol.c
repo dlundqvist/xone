@@ -1163,6 +1163,15 @@ static int gip_handle_pkt_announce(struct gip_client *client,
 		hw->product = le16_to_cpu(pkt->product_id);
 		hw->version = (le16_to_cpu(pkt->fw_version.major) << 8) |
 			      le16_to_cpu(pkt->fw_version.minor);
+
+		hw->fw_version[0] = le16_to_cpu(pkt->fw_version.major);
+		hw->fw_version[1] = le16_to_cpu(pkt->fw_version.minor);
+		hw->fw_version[2] = le16_to_cpu(pkt->fw_version.build);
+		hw->fw_version[3] = le16_to_cpu(pkt->fw_version.revision);
+		hw->hw_version[0] = le16_to_cpu(pkt->hw_version.major);
+		hw->hw_version[1] = le16_to_cpu(pkt->hw_version.minor);
+		hw->hw_version[2] = le16_to_cpu(pkt->hw_version.build);
+		hw->hw_version[3] = le16_to_cpu(pkt->hw_version.revision);
 	}
 
 	gip_dbg(client, "%s: address=%pM, vendor=0x%04x, product=0x%04x\n",

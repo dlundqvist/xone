@@ -48,7 +48,36 @@ static void gip_client_release(struct device *dev)
 	kfree(client);
 }
 
+static ssize_t firmware_version_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	u16 *ver = to_gip_client(dev)->hardware.fw_version;
+
+	return sysfs_emit(buf, "%u.%u.%u.%u\n",
+			  ver[0], ver[1], ver[2], ver[3]);
+}
+
+static ssize_t hardware_version_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	u16 *ver = to_gip_client(dev)->hardware.hw_version;
+
+	return sysfs_emit(buf, "%u.%u.%u.%u\n",
+			  ver[0], ver[1], ver[2], ver[3]);
+}
+
+static DEVICE_ATTR_RO(firmware_version);
+static DEVICE_ATTR_RO(hardware_version);
+
+static struct attribute *gip_client_attrs[] = {
+	&dev_attr_firmware_version.attr,
+	&dev_attr_hardware_version.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(gip_client);
+
 static struct device_type gip_client_type = {
+	.groups = gip_client_groups,
 	.uevent = gip_client_uevent,
 	.release = gip_client_release,
 };

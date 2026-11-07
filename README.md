@@ -58,6 +58,29 @@ Always update your Xbox devices to the latest firmware version!
 - [x] Xbox One Chatpad
 - [ ] Third party racing wheels (Thrustmaster, Logitech, etc.)
 
+## Using the wireless dongle without Microsoft's firmware
+
+The `xone_mtnet` module runs the old and new Xbox Wireless Dongles (`045e:02e6` and `045e:02fe`) on the kernel's
+`mt76x2u` driver and Mediatek's firmware from `linux-firmware`, so no firmware from Microsoft is needed. It's optional
+and experimental. To switch to it after installing `xone`, with `iw` installed, run this and then replug the dongle:
+
+```shell
+sudo ./install/mtnet/install.sh
+```
+
+Run it with `--remove` to switch back. Controllers already paired with the dongle stay paired.
+
+The dongle's button and LED work as usual: press the button to start pairing, and the LED blinks while pairing, stays
+on while a controller is connected, and is off otherwise.
+
+Known limits:
+
+- The channel is fixed, and channel 153 is the default. Set a different one with the `channel` module parameter. Unlike
+  Microsoft's firmware, the module doesn't look for a quiet channel. Only channel 153 has been tested since the timing
+  fixes, and channels 36 and 40 dropped controllers before them.
+- Built-in dongles (`045e:02f9` and `045e:091e`), wake on wireless and more than one dongle aren't supported.
+- Only the Xbox One S (1708) and Elite Series 1 controllers have been tested. Wireless headset audio is untested.
+
 ## Releases
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/xone.svg)](https://repology.org/project/xone/versions)

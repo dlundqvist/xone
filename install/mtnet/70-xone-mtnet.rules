@@ -1,0 +1,2 @@
+# Runs Xbox wireless dongles on mt76x2u and xone_mtnet instead of as Wi-Fi adapters
+ACTION=="add", SUBSYSTEM=="net", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="02e6|02fe", ENV{NM_UNMANAGED}="1", RUN+="/usr/libexec/xone-mtnet-setup $attr{ifindex}"

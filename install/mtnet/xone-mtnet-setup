@@ -1,0 +1,19 @@
+#!/bin/sh
+# Prepares an Xbox wireless dongle's mt76x2u interface for xone_mtnet, which
+# attaches when the interface comes up. Run by udev with the interface's index,
+# because its name may have changed since udev read the rule.
+set -eu
+
+iface=$(basename "$(dirname "$(grep -lx "$1" /sys/class/net/*/ifindex)")")
+param=/sys/module/xone_mtnet/parameters/channel
+
+[ -d /sys/module/xone_mtnet ] || modprobe xone_mtnet
+channel=$(cat "$param")
+
+ip link set "$iface" down
+# Hardware acknowledges frames sent to this address, and paired controllers
+# look for it, so it can't be a randomized one
+ip link set "$iface" address "$(cat "/sys/class/net/$iface/phy80211/macaddress")"
+iw dev "$iface" set type monitor
+ip link set "$iface" up
+iw dev "$iface" set channel "$channel" HT20

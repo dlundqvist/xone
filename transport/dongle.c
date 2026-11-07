@@ -1436,6 +1436,14 @@ static void xone_dongle_shutdown(struct usb_interface *intf)
 	if (err)
 		dev_err(dongle->mt.dev, "%s: power off failed: %d\n",
 			__func__, err);
+
+	/*
+	 * Boards that keep VBUS in S5 leave the radio up until the next boot's
+	 * warm reset, and a pad connecting meanwhile wedges the dongle (#227).
+	 * No WoW as in suspend: nothing should wake the box from off.
+	 */
+	if (dongle->fw_state == XONE_DONGLE_FW_STATE_READY)
+		xone_mt76_stop_radio(&dongle->mt);
 }
 
 static int xone_dongle_pre_reset(struct usb_interface *intf)

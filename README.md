@@ -37,7 +37,7 @@ Always update your Xbox devices to the latest firmware version!
 - [x] Battery reporting (`UPower` integration)
 - [x] LED control (using `/sys/class/leds`)
 - [x] Audio capture/playback (through `ALSA`)
-- [x] Power management (suspend/resume and remote/wireless wakeup)
+- [x] Power management (suspend/resume, and remote wakeup over USB)
 
 ## Supported devices
 
@@ -58,17 +58,11 @@ Always update your Xbox devices to the latest firmware version!
 - [x] Xbox One Chatpad
 - [ ] Third party racing wheels (Thrustmaster, Logitech, etc.)
 
-## Using the wireless dongle without Microsoft's firmware
+## Wireless dongle
 
-The `xone_mtnet` module runs the old and new Xbox Wireless Dongles (`045e:02e6` and `045e:02fe`) on the kernel's
-`mt76x2u` driver and Mediatek's firmware from `linux-firmware`, so no firmware from Microsoft is needed. It's optional
-and experimental. To switch to it after installing `xone`, with `iw` installed, run this and then replug the dongle:
-
-```shell
-sudo ./install/mtnet/install.sh
-```
-
-Run it with `--remove` to switch back. Controllers already paired with the dongle stay paired.
+The old and new Xbox Wireless Dongles (`045e:02e6` and `045e:02fe`) run on the kernel's `mt76x2u` driver and
+Mediatek's firmware from `linux-firmware`, through the `xone_mtnet` module. No firmware from Microsoft is needed.
+`make install` sets this up, and the dongle is ready once it's replugged.
 
 The dongle's button and LED work as usual: press the button to start pairing, and the LED blinks while pairing, stays
 on while a controller is connected, and is off otherwise.
@@ -80,6 +74,22 @@ Known limits:
   fixes, and channels 36 and 40 dropped controllers before them.
 - Built-in dongles (`045e:02f9` and `045e:091e`), wake on wireless and more than one dongle aren't supported.
 - Only the Xbox One S (1708) and Elite Series 1 controllers have been tested. Wireless headset audio is untested.
+
+### Using Microsoft's firmware instead
+
+The `xone_dongle` module drives the dongle with Microsoft's firmware, which supports built-in dongles and wake on
+wireless. The firmware can't be redistributed, so it's downloaded from Microsoft, under Microsoft's Terms of Use, and
+needs `curl` and `bsdtar`. To switch to it, run this and then replug the dongle:
+
+```shell
+sudo ./install/mtnet/install.sh --remove
+sudo ./install/firmware.sh
+```
+
+Run `sudo ./install/mtnet/install.sh` to switch back. Controllers already paired with the dongle stay paired.
+
+> [!TIP]
+> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02fe.bin`
 
 ## Releases
 
@@ -131,8 +141,7 @@ make clean
 
 - Linux (kernel 5.13+ and headers)
 - DKMS
-- curl (for firmware download)
-- bsdtar (for firmware extraction)
+- iw (to set up the wireless dongle)
 - For SecureBoot-enabled systems see [SecureBoot dkms guide](https://github.com/dell/dkms#secure-boot)
 
 ### Guide
@@ -154,18 +163,7 @@ sudo make install
 
 **NOTE:** You can use the `install-debug` target instead to enable debug logging.
 
-4. Download the firmware for the wireless dongle (optional, makefile automatically installs firmware):
-
-```
-sudo install/firmware.sh
-```
-> [!NOTE]
-> The `--skip-disclaimer` flag might be useful for scripting purposes.
-
-> [!TIP]
-> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02fe.bin`
-
-5. Plug in your Xbox devices.
+4. Plug in your Xbox devices.
 
 ### Updating
 
@@ -246,16 +244,22 @@ The modes and the maximum brightness can vary from device to device.
 The pairing mode of the dongle can be queried via `sysfs`:
 
 ```
-cat /sys/bus/usb/drivers/xone-dongle/*/pairing
+cat /sys/module/xone_mtnet/parameters/pairing
 ```
 
-You can enable (`1`) or disable (`0`) the pairing using the following command:
+You can enable (`1`) or disable (`0`) the pairing using the following command. Pairing mode ends by itself after 60
+seconds or when a controller pairs.
 
 ```
-echo 1 | sudo tee /sys/bus/usb/drivers/xone-dongle/*/pairing
+echo 1 | sudo tee /sys/module/xone_mtnet/parameters/pairing
 ```
+
+With Microsoft's firmware, use `/sys/bus/usb/drivers/xone-dongle/*/pairing` instead.
 
 ## Number of active clients and forcing poweroff
+
+These are only available with Microsoft's firmware.
+
 ```
 # show number of connected controllers
 cat /sys/bus/usb/drivers/xone-dongle/*/active_clients
@@ -275,8 +279,9 @@ If `xone` is not being loaded automatically you might have to reboot your system
 
 ### Error messages
 
-- `Direct firmware load for xow_dongle.bin failed with error -2`
-    - Download the firmware for the wireless dongle (see installation guide).
+- `Direct firmware load for xone_dongle_02fe.bin failed with error -2`
+    - `xone_dongle` is in use but Microsoft's firmware isn't installed. Either switch back to `xone_mtnet` or download
+      the firmware (see *Using Microsoft's firmware instead*).
 
 ### Input issues
 

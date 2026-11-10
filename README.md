@@ -73,9 +73,9 @@ on while a controller is connected, and is off otherwise.
 ### Wake on wireless
 
 With `xone_mtnet`, turning on a paired controller wakes the computer from suspend (the `wake` module parameter, on by
-default). This works only when the computer suspends with s2idle, because the S3 path powers the dongle down, so
-`make install` adds a systemd drop-in that sets `SuspendState=freeze`. On machines that used to suspend to S3 this uses
-more power while asleep. After waking, the dongle is re-probed and the controller reconnects within a few seconds.
+default). It works with whichever sleep mode the system uses, s2idle or S3 (deep), and has been tested with both. For
+S3 the motherboard has to keep the USB port powered while asleep and allow USB devices to wake it; on some boards that
+is a firmware setup option. After waking, the dongle is re-probed and the controller reconnects within a few seconds.
 
 Known limits:
 

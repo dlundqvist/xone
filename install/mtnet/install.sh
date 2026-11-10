@@ -14,8 +14,7 @@ fi
 cd "$(dirname "$(readlink -f "$0")")"
 
 if [ "${1:-}" == --remove ]; then
-    rm -f /etc/udev/rules.d/70-xone-mtnet.rules /usr/libexec/xone-mtnet-setup \
-          /etc/systemd/sleep.conf.d/60-xone-mtnet.conf
+    rm -f /etc/udev/rules.d/70-xone-mtnet.rules /usr/libexec/xone-mtnet-setup
     install -D -m 644 ../modprobe.conf /etc/modprobe.d/xone-blacklist.conf
     modprobe -r xone_mtnet mt76x2u || true
 else
@@ -26,7 +25,6 @@ else
     install -D -m 755 xone-mtnet-setup /usr/libexec/xone-mtnet-setup
     install -D -m 644 70-xone-mtnet.rules /etc/udev/rules.d/70-xone-mtnet.rules
     install -D -m 644 modprobe.conf /etc/modprobe.d/xone-blacklist.conf
-    install -D -m 644 sleep.conf /etc/systemd/sleep.conf.d/60-xone-mtnet.conf
 fi
 
 udevadm control --reload

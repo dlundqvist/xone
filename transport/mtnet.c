@@ -21,10 +21,9 @@
  * 1 to the pairing parameter. The LED blinks while pairing, stays on while a
  * client is connected, and is off otherwise.
  *
- * A powered-on controller wakes the host from system suspend (wake parameter,
- * on by default; the host must suspend via s2idle, see install/mtnet/). After
- * resume the dongle is re-probed and the udev rule puts it back into monitor
- * mode.
+ * A powered-on controller wakes the host from system suspend, s2idle or S3
+ * (wake parameter, on by default). After resume the dongle is re-probed and the
+ * udev rule puts it back into monitor mode.
  *
  * Not handled: moving between channels, and more than one dongle.
  */
@@ -964,10 +963,10 @@ static bool mtnet_is_dongle_monitor(struct net_device *dev)
  *
  * While the host sleeps the dongle keeps its radio listening - its own beacon
  * timer keeps it visible to controllers, and the firmware's wake-on-traffic
- * feature raises USB remote wakeup when a controller powers on. The host must
- * suspend via s2idle ("freeze"); the platform ("mem") path powers the dongle
- * down and loses the wake. A controller started minutes into sleep still wakes
- * the host because of the "always trigger" feature (feature 7).
+ * feature raises USB remote wakeup when a controller powers on. This works from
+ * s2idle and from S3, as long as the board keeps the USB port powered and lets
+ * USB devices wake it. A controller started minutes into sleep still wakes the
+ * host because of the "always trigger" feature (feature 7).
  *
  * The arm must run after mac80211 has stopped the radio (drv_stop) and before
  * the USB device suspends; the disarm + ROM-semaphore release must run inside
@@ -1177,11 +1176,9 @@ static int mtnet_hw_beacon_start(void)
  * Enable wakeup along the USB chain only - the dongle, any hubs, and the root
  * hub - by walking the USB topology (usb_device->parent, which ends at the root
  * hub). The logind suspend path was seen to leave the root hub's wakeup
- * disabled, which breaks remote-wake propagation. Deliberately do NOT walk into
- * the device-model parents above the root hub (the xHCI PCI device and its ACPI
- * parents): enabling wakeup there arms a platform GPE that fires on its own and
- * wakes the host spuriously. In s2idle the dongle's remote-wake reaches the host
- * through the xHCI interrupt, so the USB chain is all that is needed.
+ * disabled, which breaks remote-wake propagation. The xHCI controller and the
+ * PCI bridges above it are left to the platform: wakeup is enabled on them by
+ * default, and the wake from S3 arrives as a PCIe PME through them.
  */
 static void mtnet_reassert_wakeup(void)
 {

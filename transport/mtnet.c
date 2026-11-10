@@ -21,7 +21,12 @@
  * 1 to the pairing parameter. The LED blinks while pairing, stays on while a
  * client is connected, and is off otherwise.
  *
- * Not handled: moving between channels, wake on wireless, and more than one dongle.
+ * A powered-on controller wakes the host from system suspend (wake parameter,
+ * on by default; the host must suspend via s2idle, see install/mtnet/). After
+ * resume the dongle is re-probed and the udev rule puts it back into monitor
+ * mode.
+ *
+ * Not handled: moving between channels, and more than one dongle.
  */
 
 #include <linux/module.h>
@@ -34,6 +39,9 @@
 #include <linux/usb.h>
 #include <linux/unaligned.h>
 #include <linux/ktime.h>
+#include <linux/bitfield.h>
+#include <linux/delay.h>
+#include <linux/hex.h>
 #include <linux/hrtimer.h>
 #include <linux/math64.h>
 #include <linux/skbuff.h>
@@ -42,8 +50,10 @@
 #include <linux/scatterlist.h>
 #include <linux/spinlock.h>
 #include <linux/rtnetlink.h>
+#include <linux/device.h>
 #include <crypto/aead.h>
 #include <net/ieee80211_radiotap.h>
+#include <net/cfg80211.h>
 
 #include "../bus/bus.h"
 
@@ -161,6 +171,10 @@ static struct {
 	bool running;
 	unsigned long pairing_since;
 	unsigned long last_unknown;
+	/* Wake on wireless */
+	u8 cmd_ep;
+	bool wow_armed;
+	u32 saved_rx_filter;
 } mtnet;
 
 static void mtnet_xmit(struct sk_buff *skb)
@@ -214,22 +228,15 @@ static int mtnet_send_mgmt(u16 fc, const u8 *addr, const void *body, unsigned in
  * milliseconds a beacon, so beacons come from an absolute hrtimer instead,
  * each stamped with the time of its slot.
  */
-static enum hrtimer_restart mtnet_beacon(struct hrtimer *timer)
+#define MTNET_BEACON_BODY_LEN (12 + 2 + 18)
+
+static void mtnet_beacon_body(u8 *body, u64 timestamp)
 {
 	static const u8 prefix[] = { 0xdd, 0x10, 0x00, 0x50, 0xf2, 0x11, 0x01, 0x10 };
-	static const u8 broadcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-	ktime_t slot = hrtimer_get_expires(timer);
-	u8 body[12 + 2 + 18] = {};
 	u8 *ie = body + 14;
-	u64 late;
 
-	late = hrtimer_forward_now(timer, ns_to_ktime(MTNET_BEACON_NS));
-	if (late > 1) {
-		netdev_dbg(mtnet.ndev, "beacon late: %llu slots missed\n", late - 1);
-		slot = ktime_sub_ns(hrtimer_get_expires(timer), MTNET_BEACON_NS);
-	}
-
-	*(__le64 *)body = cpu_to_le64(ktime_to_us(slot));
+	memset(body, 0, MTNET_BEACON_BODY_LEN);
+	*(__le64 *)body = cpu_to_le64(timestamp);
 	*(__le16 *)(body + 8) = cpu_to_le16(MTNET_BEACON_TU);
 	*(__le16 *)(body + 10) = cpu_to_le16(0xc631);
 	/* An empty SSID element sits at body[12..13], left zero */
@@ -239,7 +246,22 @@ static enum hrtimer_restart mtnet_beacon(struct hrtimer *timer)
 	ie[10] = 0x30;
 	ie[11] = 0x99;
 	ie[12] = channel;
+}
 
+static enum hrtimer_restart mtnet_beacon(struct hrtimer *timer)
+{
+	static const u8 broadcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+	ktime_t slot = hrtimer_get_expires(timer);
+	u8 body[MTNET_BEACON_BODY_LEN];
+	u64 late;
+
+	late = hrtimer_forward_now(timer, ns_to_ktime(MTNET_BEACON_NS));
+	if (late > 1) {
+		netdev_dbg(mtnet.ndev, "beacon late: %llu slots missed\n", late - 1);
+		slot = ktime_sub_ns(hrtimer_get_expires(timer), MTNET_BEACON_NS);
+	}
+
+	mtnet_beacon_body(body, ktime_to_us(slot));
 	mtnet_send_mgmt(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON, broadcast, body, sizeof(body));
 	return HRTIMER_RESTART;
 }
@@ -937,6 +959,554 @@ static bool mtnet_is_dongle_monitor(struct net_device *dev)
 	return usb_match_id(to_usb_interface(parent), mtnet_id_table);
 }
 
+/*
+ * Wake on wireless.
+ *
+ * While the host sleeps the dongle keeps its radio listening - its own beacon
+ * timer keeps it visible to controllers, and the firmware's wake-on-traffic
+ * feature raises USB remote wakeup when a controller powers on. The host must
+ * suspend via s2idle ("freeze"); the platform ("mem") path powers the dongle
+ * down and loses the wake. A controller started minutes into sleep still wakes
+ * the host because of the "always trigger" feature (feature 7).
+ *
+ * The arm must run after mac80211 has stopped the radio (drv_stop) and before
+ * the USB device suspends; the disarm + ROM-semaphore release must run inside
+ * mt76x2u's own resume, before mac80211 brings the radio back up. Those exact
+ * points are reached by wrapping mt76x2u's .suspend/.resume - see the big
+ * "TEMPORARY MECHANISM" comment below (mtnet_wrap_resume) and NOTES.md.
+ *
+ * The firmware command layout (CMD_WOW_FEATURE 24, CMD_WOW_CONFIG 21) matches
+ * MediaTek's GPL MT7612U driver; which parameters wake a controller were found
+ * by testing. No Microsoft firmware is involved.
+ */
+#define MTNET_MCU_CMD_WOW_FEATURE 24
+#define MTNET_MCU_CMD_WOW_CONFIG 21
+#define MTNET_MCU_CPU_TX_PORT 2
+#define MTNET_MCU_MSG_TYPE_CMD BIT(30)
+#define MTNET_VWOW_ENABLE 1
+#define MTNET_VWOW_TRAFFIC 3
+#define MTNET_VWOW_WAKEUP 4
+#define MTNET_VWOW_ALWAYS 7
+#define MTNET_VWOW_TO_HOST 0
+#define MTNET_VWOW_TO_ANDES 1
+#define MTNET_VWOW_BY_USB 1
+#define MTNET_VWOW_MASK_CFG 1
+#define MTNET_VWOW_INFRA_CFG 3
+#define MTNET_WOW_DETECT 128
+#define MTNET_REG_RX_FILTR_CFG 0x1400
+/* While suspended, drop everything but frames sent to the dongle itself */
+#define MTNET_RX_FILTR_SUSPEND (GENMASK(16, 0) & ~BIT(3))
+#define MTNET_REG_MAC_SYS_CTRL 0x1004
+#define MTNET_MAC_SYS_ENABLE_TX BIT(2)
+#define MTNET_MAC_SYS_ENABLE_RX BIT(3)
+#define MTNET_REG_MAC_BSSID_DW0 0x1010
+#define MTNET_REG_MAC_BSSID_DW1 0x1014
+#define MTNET_REG_BCN_BYPASS_MASK 0x108c
+#define MTNET_REG_BEACON_TIME_CFG 0x1114
+#define MTNET_BEACON_TIME_INTVAL GENMASK(15, 0)
+#define MTNET_BEACON_TIME_EN (BIT(16) | GENMASK(18, 17) | BIT(19) | BIT(20))
+#define MTNET_BEACON_BASE 0xc000
+#define MTNET_TXWI_LEN 20
+#define MTNET_REG_MCU_SEMAPHORE_03 0x07bc
+
+static bool wake = true;
+module_param(wake, bool, 0644);
+MODULE_PARM_DESC(wake, "Wake the host when a controller powers on during sleep");
+
+/*
+ * BSSID placed in the firmware's wake-on-wireless infrastructure config. Its
+ * exact role is still being characterised, so it is left tunable; the default
+ * is the value validated end to end.
+ */
+static char wow_ap[18] = "7e:ed:8b:ac:95:d6";
+module_param_string(wow_ap, wow_ap, sizeof(wow_ap), 0644);
+MODULE_PARM_DESC(wow_ap, "BSSID for the firmware's wake-on-wireless config");
+
+/* The first bulk OUT endpoint carries firmware commands, as mt76u numbers them */
+static u8 mtnet_cmd_endpoint(struct usb_interface *intf)
+{
+	struct usb_host_interface *alt = intf->cur_altsetting;
+	int i;
+
+	for (i = 0; i < alt->desc.bNumEndpoints; i++)
+		if (usb_endpoint_is_bulk_out(&alt->endpoint[i].desc))
+			return usb_endpoint_num(&alt->endpoint[i].desc);
+	return 0;
+}
+
+/*
+ * Firmware commands go out on the first bulk OUT endpoint behind a TXINFO word,
+ * as in mt76x02u_mcu_send_msg(). Sequence 0 means the firmware sends no reply.
+ */
+static int mtnet_mcu_send(u8 cmd, const void *data, unsigned int len)
+{
+	unsigned int plen = round_up(len, 4);
+	u8 *buf = kzalloc(4 + plen + 4, GFP_KERNEL);
+	int ret, actual;
+
+	if (!buf)
+		return -ENOMEM;
+	put_unaligned_le32(plen | FIELD_PREP(GENMASK(29, 27), MTNET_MCU_CPU_TX_PORT) |
+			   FIELD_PREP(GENMASK(26, 20), cmd) | MTNET_MCU_MSG_TYPE_CMD, buf);
+	memcpy(buf + 4, data, len);
+	ret = usb_bulk_msg(mtnet.udev, usb_sndbulkpipe(mtnet.udev, mtnet.cmd_ep), buf,
+			   4 + plen + 4, &actual, MTNET_VEND_TIMEOUT_MS);
+	kfree(buf);
+	return ret;
+}
+
+static int mtnet_vwow_param(u32 param, u32 value)
+{
+	__le32 d[2] = { cpu_to_le32(param), cpu_to_le32(value) };
+
+	return mtnet_mcu_send(MTNET_MCU_CMD_WOW_FEATURE, d, sizeof(d));
+}
+
+/*
+ * The wake-on-wireless sequence derived from MediaTek's GPL MT7612U driver
+ * (RT28xxAndesWOWEnable, CMD_WOW_FEATURE {u32 param, u32 value} and
+ * CMD_WOW_CONFIG {u32 type, ...}). TO_ANDES is the working traffic routing on
+ * this firmware; TO_HOST silences the radio. Feature 7 ("always trigger")
+ * keeps it listening through an idle period.
+ */
+static int mtnet_vwow_arm(void)
+{
+	__le32 mask[4] = { cpu_to_le32(MTNET_VWOW_MASK_CFG), cpu_to_le32(1),
+			   cpu_to_le32(MTNET_WOW_DETECT), 0 };
+	u8 infra[20] = {};
+	u8 ap[ETH_ALEN];
+	int err;
+
+	if (!mac_pton(wow_ap, ap))
+		return -EINVAL;
+	put_unaligned_le32(MTNET_VWOW_INFRA_CFG, infra);
+	ether_addr_copy(infra + 4, mtnet.ndev->dev_addr);
+	ether_addr_copy(infra + 10, ap);
+	put_unaligned_le32(1, infra + 16);
+
+	/* Start from wake off, in case an earlier cycle left it half armed */
+	mtnet_vwow_param(MTNET_VWOW_ENABLE, 0);
+	mtnet_vwow_param(MTNET_VWOW_TRAFFIC, MTNET_VWOW_TO_ANDES);
+	usleep_range(1000, 2000);
+	err = mtnet_vwow_param(MTNET_VWOW_ENABLE, 1);
+	usleep_range(1000, 2000);
+	if (!err)
+		err = mtnet_mcu_send(MTNET_MCU_CMD_WOW_CONFIG, mask, sizeof(mask));
+	usleep_range(1000, 2000);
+	if (!err)
+		err = mtnet_mcu_send(MTNET_MCU_CMD_WOW_CONFIG, infra, sizeof(infra));
+	usleep_range(1000, 2000);
+	if (!err)
+		err = mtnet_vwow_param(MTNET_VWOW_WAKEUP, MTNET_VWOW_BY_USB);
+	usleep_range(1000, 2000);
+	if (!err)
+		err = mtnet_vwow_param(MTNET_VWOW_ALWAYS, 1);
+	usleep_range(1000, 2000);
+	if (!err)
+		err = mtnet_vwow_param(MTNET_VWOW_TRAFFIC, MTNET_VWOW_TO_ANDES);
+	return err;
+}
+
+/* 4 bytes at a time, through the same vendor request as registers */
+static int mtnet_mem_write(u32 addr, const u8 *data, unsigned int len)
+{
+	unsigned int i;
+	int err;
+
+	for (i = 0; i < len; i += 4) {
+		u32 val = 0;
+
+		memcpy(&val, data + i, min(4U, len - i));
+		err = mtnet_reg_write(addr + i, le32_to_cpu((__force __le32)val));
+		if (err)
+			return err;
+	}
+	return 0;
+}
+
+/*
+ * The chip's own beacon timer keeps the dongle visible while the host sleeps.
+ * Layout is mt76x02's AP-mode beacon support: a TXWI and the frame in beacon
+ * memory slot 0, the slot enabled in the bypass mask, then the TBTT timer on.
+ */
+static int mtnet_hw_beacon_start(void)
+{
+	const u8 *mac = mtnet.ndev->dev_addr;
+	u8 buf[MTNET_TXWI_LEN + 24 + MTNET_BEACON_BODY_LEN] = {};
+	struct ieee80211_hdr_3addr *hdr = (void *)(buf + MTNET_TXWI_LEN);
+	unsigned int flen = 24 + MTNET_BEACON_BODY_LEN;
+	u32 val;
+	int err;
+
+	/* TXWI: insert the TSF (flags TS), OFDM 6 Mb/s, no ACK, hardware sequence */
+	put_unaligned_le16(BIT(3), buf);
+	put_unaligned_le16(1 << 13, buf + 2);
+	buf[4] = BIT(1);
+	buf[5] = 0xff;
+	put_unaligned_le16(flen, buf + 6);
+
+	hdr->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON);
+	eth_broadcast_addr(hdr->addr1);
+	ether_addr_copy(hdr->addr2, mac);
+	ether_addr_copy(hdr->addr3, mac);
+	mtnet_beacon_body(buf + MTNET_TXWI_LEN + 24, 0);
+
+	err = mtnet_reg_write(MTNET_REG_BCN_BYPASS_MASK, 0xffffffff);
+	if (!err)
+		err = mtnet_mem_write(MTNET_BEACON_BASE, buf, sizeof(buf));
+	if (!err)
+		err = mtnet_reg_write(MTNET_REG_MAC_BSSID_DW0, get_unaligned_le32(mac));
+	if (!err)
+		err = mtnet_reg_read(MTNET_REG_MAC_BSSID_DW1, &val);
+	if (!err)
+		err = mtnet_reg_write(MTNET_REG_MAC_BSSID_DW1,
+				      (val & ~GENMASK(15, 0)) | get_unaligned_le16(mac + 4));
+	if (!err)
+		err = mtnet_reg_write(MTNET_REG_BCN_BYPASS_MASK, 0xffffff7f);
+	if (!err)
+		err = mtnet_reg_rmw(MTNET_REG_BEACON_TIME_CFG,
+				    MTNET_BEACON_TIME_INTVAL | MTNET_BEACON_TIME_EN,
+				    (MTNET_BEACON_TU << 4) | MTNET_BEACON_TIME_EN);
+	if (!err)
+		err = mtnet_reg_rmw(MTNET_REG_MAC_SYS_CTRL, 0,
+				    MTNET_MAC_SYS_ENABLE_TX | MTNET_MAC_SYS_ENABLE_RX);
+	return err;
+}
+
+/*
+ * Enable wakeup along the USB chain only - the dongle, any hubs, and the root
+ * hub - by walking the USB topology (usb_device->parent, which ends at the root
+ * hub). The logind suspend path was seen to leave the root hub's wakeup
+ * disabled, which breaks remote-wake propagation. Deliberately do NOT walk into
+ * the device-model parents above the root hub (the xHCI PCI device and its ACPI
+ * parents): enabling wakeup there arms a platform GPE that fires on its own and
+ * wakes the host spuriously. In s2idle the dongle's remote-wake reaches the host
+ * through the xHCI interrupt, so the USB chain is all that is needed.
+ */
+static void mtnet_reassert_wakeup(void)
+{
+	struct usb_device *u;
+
+	for (u = mtnet.udev; u; u = u->parent)
+		if (device_can_wakeup(&u->dev))
+			device_set_wakeup_enable(&u->dev, true);
+}
+
+/*
+ * FIRMWARE-SPECIFIC, REVERSE-ENGINEERED - NOT FOR CLEAN UPSTREAM SUBMISSION.
+ *
+ * The wake "detect" we use (bit 7) is a fixed ~10 s firmware timer: left to
+ * itself it posts a wake roughly every 10 s and the host wakes spuriously. This
+ * installs a small nds32 stub in the mt7662u firmware's ILM gap (0x8fbc0) and
+ * repoints the firmware's wake-poster pointer (0x1002e0) at it. The stub posts
+ * the wake only when receive-buffer slot 1 (0x115624) holds a real frame, so
+ * the periodic timer no longer wakes the host on its own - only a controller's
+ * frame does. The words and addresses below are specific to this MediaTek
+ * firmware build (found by analysing it); they are the main thing "Option B"
+ * must replace with something maintainable before this could go upstream. On
+ * resume mt76x2u reloads the firmware, which wipes the stub, so there is no undo.
+ */
+#define MTNET_MCU_CMD_RANDOM_WRITE 12
+struct mtnet_ram_word { u32 addr; u32 val; };
+static const struct mtnet_ram_word mtnet_gate[] = {
+	{ 0x8fbc0, 0x1401f046 }, { 0x8fbc4, 0x948ff758 }, { 0x8fbc8, 0x00805704 },
+	{ 0x8fbcc, 0x01805250 }, { 0x8fbd0, 0x00805714 }, { 0x8fbd4, 0x1501f046 },
+	{ 0x8fbd8, 0x2486f758 }, { 0x8fbdc, 0x00805704 }, { 0x8fbe0, 0x0800524e },
+	{ 0x8fbe4, 0x0800f046 }, { 0x8fbe8, 0x1889f758 }, { 0x8fbec, 0x003c004a },
+	{ 0x8fbf0, 0x00000044 }, { 0x8fbf4, 0x2078004a }, { 0x1002e0, 0x0008fbc0 },
+	{ 0x114f94, 0x00000000 },
+};
+
+/* Original value of the firmware's wake-poster pointer at 0x1002e0 (ROM poster
+ * 0x00008918); the gate repoints it to our stub, and resume must put it back
+ * before mt76x2u reloads the firmware, or the MCU jumps into a half-wiped stub
+ * during the reload and the dongle drops off the bus. */
+#define MTNET_WAKE_POSTER_ADDR 0x1002e0
+#define MTNET_WAKE_POSTER_ROM  0x00008918
+
+static void mtnet_mcu_ram_write(const struct mtnet_ram_word *w, int n)
+{
+	static u8 seq;
+	u8 *buf = kzalloc(64, GFP_KERNEL);
+	int i, actual;
+
+	if (!buf)
+		return;
+	for (i = 0; i < n; i++) {
+		seq = seq % 15 + 1;
+		memset(buf, 0, 16);
+		put_unaligned_le32(8 | FIELD_PREP(GENMASK(19, 16), seq) |
+				   FIELD_PREP(GENMASK(29, 27), MTNET_MCU_CPU_TX_PORT) |
+				   FIELD_PREP(GENMASK(26, 20), MTNET_MCU_CMD_RANDOM_WRITE) |
+				   MTNET_MCU_MSG_TYPE_CMD, buf);
+		put_unaligned_le32(w[i].addr, buf + 4);
+		put_unaligned_le32(w[i].val, buf + 8);
+		if (!usb_bulk_msg(mtnet.udev, usb_sndbulkpipe(mtnet.udev, mtnet.cmd_ep),
+				  buf, 16, &actual, MTNET_VEND_TIMEOUT_MS))
+			usb_bulk_msg(mtnet.udev, usb_rcvbulkpipe(mtnet.udev, 0x85),
+				     buf, 64, &actual, 300);
+	}
+	kfree(buf);
+}
+
+static void mtnet_install_gate(void)
+{
+	mtnet_mcu_ram_write(mtnet_gate, ARRAY_SIZE(mtnet_gate));
+}
+
+/* Put the wake-poster pointer back to the ROM poster before mt76x2u reloads */
+static void mtnet_restore_gate(void)
+{
+	static const struct mtnet_ram_word r[] = {
+		{ MTNET_WAKE_POSTER_ADDR, MTNET_WAKE_POSTER_ROM },
+	};
+
+	mtnet_mcu_ram_write(r, ARRAY_SIZE(r));
+}
+
+/*
+ * Debug (wake_debug): read one MCU RAM word with CMD_RANDOM_READ (10).
+ * The reply carries {addr, value} after the first word.
+ */
+#define MTNET_MCU_CMD_RANDOM_READ 10
+static u32 mtnet_peek(u32 addr)
+{
+	static u8 seq;
+	u8 *buf = kzalloc(2048, GFP_KERNEL);
+	u32 val = 0xffffffff;
+	int actual;
+
+	if (!buf)
+		return val;
+	seq = seq % 15 + 1;
+	put_unaligned_le32(8 | FIELD_PREP(GENMASK(19, 16), seq) |
+			   FIELD_PREP(GENMASK(29, 27), MTNET_MCU_CPU_TX_PORT) |
+			   FIELD_PREP(GENMASK(26, 20), MTNET_MCU_CMD_RANDOM_READ) |
+			   MTNET_MCU_MSG_TYPE_CMD, buf);
+	put_unaligned_le32(addr, buf + 4);
+	if (!usb_bulk_msg(mtnet.udev, usb_sndbulkpipe(mtnet.udev, mtnet.cmd_ep), buf, 16,
+			  &actual, MTNET_VEND_TIMEOUT_MS) &&
+	    !usb_bulk_msg(mtnet.udev, usb_rcvbulkpipe(mtnet.udev, 0x85), buf, 2048,
+			  &actual, 300) &&
+	    actual >= 12 && get_unaligned_le32(buf + 4) == addr)
+		val = get_unaligned_le32(buf + 8);
+	kfree(buf);
+	return val;
+}
+
+/* RX buffer ring: 6 slots from 0x114fb8, stride 0x640; first data word at +0x2c */
+#define MTNET_RX_RING_BASE 0x114fb8
+#define MTNET_RX_RING_STRIDE 0x640
+#define MTNET_RX_RING_SLOTS 6
+#define MTNET_RX_SLOT_DATA 0x2c
+#define MTNET_GATE_TICKS 0x114f94
+
+static bool wake_debug;
+module_param(wake_debug, bool, 0644);
+MODULE_PARM_DESC(wake_debug, "Log the wake gate's tick count and receive slots when arming and on resume");
+
+/* Read before mt76x2u reloads the firmware, which wipes these */
+static void mtnet_log_gate_state(void)
+{
+	u32 s[MTNET_RX_RING_SLOTS];
+	int i;
+
+	if (!READ_ONCE(wake_debug))
+		return;
+
+	for (i = 0; i < MTNET_RX_RING_SLOTS; i++)
+		s[i] = mtnet_peek(MTNET_RX_RING_BASE + i * MTNET_RX_RING_STRIDE + MTNET_RX_SLOT_DATA);
+	pr_info("xone_mtnet: wake: gate ticks %#x, rx slots %08x %08x %08x %08x %08x %08x\n",
+		mtnet_peek(MTNET_GATE_TICKS), s[0], s[1], s[2], s[3], s[4], s[5]);
+}
+
+/* Runs after mac80211 has stopped the radio; turns the parts we need back on */
+static int mtnet_wow_arm(void)
+{
+	int err;
+
+	/* Install the spurious-wake filter stub before arming (see above) */
+	mtnet_install_gate();
+	mtnet_log_gate_state();
+	/* MAC transmit and receive on (drv_stop turned them off) */
+	err = mtnet_reg_rmw(MTNET_REG_MAC_SYS_CTRL, 0,
+			    MTNET_MAC_SYS_ENABLE_TX | MTNET_MAC_SYS_ENABLE_RX);
+	/* Beacon, so controllers keep seeing the dongle while the host sleeps */
+	if (!err)
+		err = mtnet_hw_beacon_start();
+	/* Receive only frames addressed to the dongle while suspended */
+	if (!err)
+		err = mtnet_reg_read(MTNET_REG_RX_FILTR_CFG, &mtnet.saved_rx_filter);
+	if (!err)
+		err = mtnet_reg_write(MTNET_REG_RX_FILTR_CFG, MTNET_RX_FILTR_SUSPEND);
+	/* Arm the firmware's wake-on-traffic, with the always-trigger */
+	if (!err)
+		err = mtnet_vwow_arm();
+	mtnet.wow_armed = true;
+	netdev_info(mtnet.ndev, "wake on wireless armed: %d\n", err);
+	return err;
+}
+
+/*
+ * Resume disarm: put traffic routing back to the host (to-firmware silences
+ * this build's radio), restore the receive filter, and hand beacons back.
+ * Runs inside mt76x2u's resume wrap, before mac80211 reconfigures, so its
+ * state machine sees a stopped radio (no drv_stop warning / disconnect).
+ */
+static void mtnet_wow_finish(void)
+{
+	if (!mtnet.wow_armed)
+		return;
+	mtnet.wow_armed = false;
+	mtnet_vwow_param(MTNET_VWOW_ENABLE, 0);
+	mtnet_vwow_param(MTNET_VWOW_TRAFFIC, MTNET_VWOW_TO_ANDES);
+	if (mtnet.saved_rx_filter)
+		mtnet_reg_write(MTNET_REG_RX_FILTR_CFG, mtnet.saved_rx_filter);
+	mtnet_reg_rmw(MTNET_REG_BEACON_TIME_CFG, BIT(16) | BIT(19) | BIT(20), 0);
+	mtnet_reg_write(MTNET_REG_BCN_BYPASS_MASK, 0xffffffff);
+	netdev_info(mtnet.ndev, "wake on wireless disarmed\n");
+}
+
+/*
+ * This dongle takes mt76x2u's rom_protect path, where
+ * mt76x2u_mcu_load_rom_patch() leaves MT_MCU_SEMAPHORE_03 held on its
+ * "already applied" return, so a later firmware reload fails with -110.
+ * Writing 1 releases it, as mt76x2u does after a successful load.
+ */
+static void mtnet_release_rom_semaphore(void)
+{
+	mtnet_reg_write(MTNET_REG_MCU_SEMAPHORE_03, 1);
+}
+
+/*
+ * ==========================================================================
+ * TEMPORARY MECHANISM - NOT FOR UPSTREAM SUBMISSION (tracked as "Option B").
+ * --------------------------------------------------------------------------
+ * The arm must run after mac80211/mt76x2u stop the radio, and the disarm +
+ * ROM-semaphore release must run INSIDE mt76x2u's own resume - USB I/O is only
+ * safe there (doing it from a separate PM device's callback deadlocks the
+ * resume). The only way to reach those exact points from this out-of-tree
+ * module is to wrap mt76x2u's own usb_driver .suspend/.resume pointers at
+ * runtime. That is a shim, not acceptable upstream. The clean replacement is a
+ * small device-gated hook exported by mt76x2u that xone registers for; it is
+ * planned alongside the old-dongle (045e:02e6) work. Until then this shim is
+ * how Nobara's out-of-tree xone gets controller-wake working. See NOTES.md.
+ * ==========================================================================
+ */
+static int (*mtnet_orig_suspend)(struct usb_interface *intf, pm_message_t message);
+static int (*mtnet_orig_resume)(struct usb_interface *intf);
+static int (*mtnet_orig_reset_resume)(struct usb_interface *intf);
+
+/*
+ * The transport's own periodic USB activity - the button/LED poll (vendor
+ * control requests), the keepalive and the beacon timer - runs on
+ * non-freezable work and a hrtimer, so without this it keeps talking to the
+ * dongle while the system suspends. Stop all of it before the device suspends;
+ * the re-probe after resume starts the transport again from scratch.
+ */
+static void mtnet_quiesce(void)
+{
+	hrtimer_cancel(&mtnet.beacon_timer);
+	cancel_delayed_work_sync(&mtnet.keepalive_work);
+	cancel_delayed_work_sync(&mtnet.button_work);
+	cancel_delayed_work_sync(&mtnet.timeout_work);
+}
+
+/*
+ * After a system resume the radio does not receive again until mt76x2u is
+ * re-probed (seen on every resume; bouncing the interface is not enough). Queue
+ * a USB reset: mt76x2u has no pre_reset/post_reset, so the USB core unbinds and
+ * rebinds it right away, and the udev rule puts the new interface back into
+ * monitor mode. The resume's own firmware reload took mt76x2u's "ROM patch
+ * already applied" path, which leaves the ROM-patch semaphore held, so release
+ * it first or the re-probe fails with -110.
+ */
+static void mtnet_reprobe_after_resume(struct usb_interface *intf)
+{
+	if (!READ_ONCE(mtnet.running))
+		return;
+	mtnet_release_rom_semaphore();
+	usb_queue_reset_device(intf);
+	netdev_info(mtnet.ndev, "resumed, re-probing the dongle\n");
+}
+
+static int mtnet_suspend_wrap(struct usb_interface *intf, pm_message_t message)
+{
+	if (READ_ONCE(mtnet.running)) {
+		mtnet_quiesce();
+		/* mt76x2u's .suspend runs after mac80211's drv_stop: arm here */
+		if (READ_ONCE(wake)) {
+			mtnet_reassert_wakeup();
+			mtnet_wow_arm();
+		}
+	}
+	return mtnet_orig_suspend ? mtnet_orig_suspend(intf, message) : 0;
+}
+
+static int mtnet_resume_wrap(struct usb_interface *intf)
+{
+	int ret;
+
+	mtnet_release_rom_semaphore();
+	if (mtnet.wow_armed) {
+		mtnet_log_gate_state();
+		mtnet_restore_gate();
+	}
+	ret = mtnet_orig_resume ? mtnet_orig_resume(intf) : 0;
+	mtnet_wow_finish();
+	mtnet_reprobe_after_resume(intf);
+	return ret;
+}
+
+static int mtnet_reset_resume_wrap(struct usb_interface *intf)
+{
+	int ret;
+
+	mtnet_release_rom_semaphore();
+	if (mtnet.wow_armed) {
+		mtnet_log_gate_state();
+		mtnet_restore_gate();
+	}
+	ret = mtnet_orig_reset_resume ? mtnet_orig_reset_resume(intf) : 0;
+	mtnet_wow_finish();
+	mtnet_reprobe_after_resume(intf);
+	return ret;
+}
+
+static void mtnet_wrap_resume(struct usb_interface *intf)
+{
+	struct usb_driver *drv;
+
+	if (!intf->dev.driver)
+		return;
+	drv = to_usb_driver(intf->dev.driver);
+	if (drv->resume == mtnet_resume_wrap)
+		return;
+	mtnet_orig_suspend = drv->suspend;
+	mtnet_orig_resume = drv->resume;
+	mtnet_orig_reset_resume = drv->reset_resume;
+	if (mtnet_orig_suspend)
+		drv->suspend = mtnet_suspend_wrap;
+	if (mtnet_orig_resume)
+		drv->resume = mtnet_resume_wrap;
+	if (mtnet_orig_reset_resume)
+		drv->reset_resume = mtnet_reset_resume_wrap;
+}
+
+static void mtnet_unwrap_resume(struct usb_interface *intf)
+{
+	struct usb_driver *drv;
+
+	if (!intf->dev.driver)
+		return;
+	drv = to_usb_driver(intf->dev.driver);
+	if (drv->resume != mtnet_resume_wrap)
+		return;
+	drv->suspend = mtnet_orig_suspend;
+	drv->resume = mtnet_orig_resume;
+	drv->reset_resume = mtnet_orig_reset_resume;
+}
+
 static void mtnet_start(struct net_device *dev)
 {
 	if (READ_ONCE(mtnet.running))
@@ -944,10 +1514,13 @@ static void mtnet_start(struct net_device *dev)
 	dev_hold(dev);
 	mtnet.ndev = dev;
 	mtnet.udev = usb_get_dev(interface_to_usbdev(to_usb_interface(dev->dev.parent)));
+	mtnet.cmd_ep = mtnet_cmd_endpoint(to_usb_interface(dev->dev.parent));
 	mtnet.led = MTNET_LED_UNSET;
 	mtnet.button_down = false;
+	mtnet.wow_armed = false;
 	mtnet.ptype.dev = dev;
 	WRITE_ONCE(mtnet.running, true);
+	mtnet_wrap_resume(to_usb_interface(dev->dev.parent));
 	dev_add_pack(&mtnet.ptype);
 	/* Start on a slot boundary, so slot times are whole multiples of 100 TU */
 	hrtimer_start(&mtnet.beacon_timer,
@@ -978,6 +1551,7 @@ static void mtnet_stop(void)
 	for (i = 0; i < MTNET_MAX_CLIENTS; i++)
 		mtnet_remove_client(i);
 	mtnet_set_led(MTNET_LED_OFF);
+	mtnet_unwrap_resume(to_usb_interface(mtnet.ndev->dev.parent));
 	usb_put_dev(mtnet.udev);
 	mtnet.udev = NULL;
 	dev_put(mtnet.ndev);

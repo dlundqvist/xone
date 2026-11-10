@@ -1546,7 +1546,12 @@ static int xone_dongle_reset_resume(struct usb_interface *intf)
 
 static const struct usb_device_id xone_dongle_id_table[] = {
 	{ USB_DEVICE(0x045e, 0x02e6) }, /* old dongle */
-	{ USB_DEVICE(0x045e, 0x02fe) }, /* new dongle */
+	/*
+	 * The new dongle (0x02fe) is handled by the in-kernel mt76x2u driver
+	 * plus the xone_mtnet transport, so it runs on MediaTek's own firmware
+	 * (from linux-firmware) instead of Microsoft's blob. It is deliberately
+	 * not claimed here; mt76x2u is no longer blacklisted for it.
+	 */
 	{ USB_DEVICE(0x045e, 0x02f9) }, /* built-in dongle (ASUS, Lenovo) */
 	{ USB_DEVICE(0x045e, 0x091e) }, /* built-in dongle (Surface Book 2) */
 	{ },

@@ -60,36 +60,48 @@ Always update your Xbox devices to the latest firmware version!
 
 ## Wireless dongle
 
-The old and new Xbox Wireless Dongles (`045e:02e6` and `045e:02fe`) run on the kernel's `mt76x2u` driver and
-Mediatek's firmware from `linux-firmware`, through the `xone_mtnet` module. No firmware from Microsoft is needed.
-`make install` sets this up, and the dongle is ready once it's replugged.
+The new Xbox Wireless Dongle (`045e:02fe`) runs on the kernel's `mt76x2u` driver and Mediatek's firmware from
+`linux-firmware`, through the `xone_mtnet` module. No firmware from Microsoft is needed. `make install` sets this up,
+and the dongle is ready once it's replugged.
+
+The old dongle (`045e:02e6`) and the built-in dongles (`045e:02f9` and `045e:091e`) don't run on `mt76x2u`, so they
+use the `xone_dongle` module and Microsoft's firmware (see *Dongles that need Microsoft's firmware*).
 
 The dongle's button and LED work as usual: press the button to start pairing, and the LED blinks while pairing, stays
 on while a controller is connected, and is off otherwise.
+
+### Wake on wireless
+
+With `xone_mtnet`, turning on a paired controller wakes the computer from suspend (the `wake` module parameter, on by
+default). This works only when the computer suspends with s2idle, because the S3 path powers the dongle down, so
+`make install` adds a systemd drop-in that sets `SuspendState=freeze`. On machines that used to suspend to S3 this uses
+more power while asleep. After waking, the dongle is re-probed and the controller reconnects within a few seconds.
 
 Known limits:
 
 - The channel is fixed, and channel 153 is the default. Set a different one with the `channel` module parameter. Unlike
   Microsoft's firmware, the module doesn't look for a quiet channel. Only channel 153 has been tested since the timing
   fixes, and channels 36 and 40 dropped controllers before them.
-- Built-in dongles (`045e:02f9` and `045e:091e`), wake on wireless and more than one dongle aren't supported.
+- More than one dongle isn't supported.
+- Waking takes up to about 10 seconds longer than the controller's normal connection time, because the dongle checks
+  for a controller about every 10 seconds while the computer sleeps.
+- Wake on wireless relies on a small patch to Mediatek's firmware in the dongle's memory that is specific to the
+  firmware build in `linux-firmware`.
 - Only the Xbox One S (1708) and Elite Series 1 controllers have been tested. Wireless headset audio is untested.
 
-### Using Microsoft's firmware instead
+### Dongles that need Microsoft's firmware
 
-The `xone_dongle` module drives the dongle with Microsoft's firmware, which supports built-in dongles and wake on
-wireless. The firmware can't be redistributed, so it's downloaded from Microsoft, under Microsoft's Terms of Use, and
-needs `curl` and `bsdtar`. To switch to it, run this and then replug the dongle:
+The `xone_dongle` module drives the old and built-in dongles with Microsoft's firmware. The firmware can't be
+redistributed, so it's downloaded from Microsoft, under Microsoft's Terms of Use, and needs `curl` and `bsdtar`:
 
 ```shell
-sudo ./install/mtnet/install.sh --remove
 sudo ./install/firmware.sh
 ```
 
-Run `sudo ./install/mtnet/install.sh` to switch back. Controllers already paired with the dongle stay paired.
+The new dongle (`045e:02fe`) always uses `xone_mtnet`; `xone_dongle` no longer claims it.
 
 > [!TIP]
-> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02fe.bin`
+> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02e6.bin`
 
 ## Releases
 
@@ -280,8 +292,8 @@ If `xone` is not being loaded automatically you might have to reboot your system
 ### Error messages
 
 - `Direct firmware load for xone_dongle_02fe.bin failed with error -2`
-    - `xone_dongle` is in use but Microsoft's firmware isn't installed. Either switch back to `xone_mtnet` or download
-      the firmware (see *Using Microsoft's firmware instead*).
+    - An old or built-in dongle is in use but Microsoft's firmware isn't installed. Download it (see *Dongles that need
+      Microsoft's firmware*).
 
 ### Input issues
 

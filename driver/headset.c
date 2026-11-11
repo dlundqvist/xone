@@ -308,7 +308,7 @@ static int gip_headset_init_pcm(struct gip_headset *headset)
 
 	err = snd_pcm_new(card, GIP_HS_NAME, 0, 1, 1, &pcm);
 	if (err)
-		return err;
+		goto err_free_card;
 
 	strscpy(pcm->name, GIP_HS_NAME, sizeof(pcm->name));
 	pcm->private_data = headset;
@@ -317,7 +317,16 @@ static int gip_headset_init_pcm(struct gip_headset *headset)
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &gip_headset_pcm_ops);
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC, NULL, 0, 0);
 
-	return snd_card_register(card);
+	err = snd_card_register(card);
+	if (err)
+		goto err_free_card;
+
+	return 0;
+
+err_free_card:
+	/* The card is devres-managed, but the client stays bound on failure. */
+	snd_card_free(card);
+	return err;
 }
 
 static void gip_headset_config(struct work_struct *work)
@@ -401,7 +410,7 @@ static void gip_headset_register(struct work_struct *work)
 		return;
 
 	dev_dbg(&client->dev, "%s: init pcm device.\n", __func__);
-	err = snd_card_free_on_error(&client->dev, gip_headset_init_pcm(headset));
+	err = gip_headset_init_pcm(headset);
 	if (err) {
 		dev_err(&client->dev, "%s: init PCM failed: %d\n",
 			__func__, err);

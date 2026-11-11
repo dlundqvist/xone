@@ -1173,18 +1173,23 @@ static int mtnet_hw_beacon_start(void)
 }
 
 /*
- * Enable wakeup along the USB chain only - the dongle, any hubs, and the root
- * hub - by walking the USB topology (usb_device->parent, which ends at the root
- * hub). The logind suspend path was seen to leave the root hub's wakeup
- * disabled, which breaks remote-wake propagation. The xHCI controller and the
- * PCI bridges above it are left to the platform: wakeup is enabled on them by
- * default, and the wake from S3 arrives as a PCIe PME through them.
+ * Enable remote wakeup on the dongle and on any external hubs between it and
+ * the root hub (walking usb_device->parent): a suspended hub only passes a
+ * downstream device's wake upstream when its own remote wakeup is enabled, so
+ * without this a dongle plugged into a hub could never wake the system.
+ *
+ * The root hub is left alone. Its wakeup flag arms wake on connect, disconnect
+ * and over-current for every port on the bus, which the dongle's own wake
+ * doesn't need (on a root port it reaches the host through the controller's
+ * PME), and turning it on lets other devices wake the system - a laptop webcam
+ * that drops off its port as the system suspends woke it at once. The xHCI
+ * controller and the PCI bridges above it are left to the platform too.
  */
 static void mtnet_reassert_wakeup(void)
 {
 	struct usb_device *u;
 
-	for (u = mtnet.udev; u; u = u->parent)
+	for (u = mtnet.udev; u && u->parent; u = u->parent)
 		if (device_can_wakeup(&u->dev))
 			device_set_wakeup_enable(&u->dev, true);
 }

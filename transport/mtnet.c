@@ -127,6 +127,11 @@ MODULE_PARM_DESC(pairing, "Announce pairing mode in the beacon, for up to 60 sec
 #define MTNET_PWR_OFF_TIMEOUT_MS 5000
 #define MTNET_PWR_OFF_QUIET_MS 1000
 
+/* Both can be changed at any time; idle time doesn't build up while turned off */
+static bool idle_poweroff = true;
+module_param(idle_poweroff, bool, 0644);
+MODULE_PARM_DESC(idle_poweroff, "Turn controllers off after idle_timeout minutes without input");
+
 static unsigned int idle_timeout = 15;
 module_param(idle_timeout, uint, 0644);
 MODULE_PARM_DESC(idle_timeout, "Minutes without input before a controller is turned off (0 = never)");
@@ -660,18 +665,54 @@ static void mtnet_stale_session(struct mtnet_client *client)
 	mtnet_queue_event(MTNET_STALE_SESSION, client->address, 0);
 }
 
+/* How far an axis must move from where it was at the last activity to count */
+#define MTNET_IDLE_STICK_DEADZONE 3000	/* of -32768..32767 */
+#define MTNET_IDLE_TRIGGER_DEADZONE 100	/* of 0..1023 */
+/* Gamepad input: buttons, two triggers and four stick axes, 2 bytes each */
+#define MTNET_GP_INPUT_LEN 14
+
+static bool mtnet_axis_moved(const u8 *a, const u8 *b, unsigned int off, bool stick)
+{
+	int x = stick ? (s16)get_unaligned_le16(a + off) : get_unaligned_le16(a + off);
+	int y = stick ? (s16)get_unaligned_le16(b + off) : get_unaligned_le16(b + off);
+
+	return abs(x - y) > (stick ? MTNET_IDLE_STICK_DEADZONE : MTNET_IDLE_TRIGGER_DEADZONE);
+}
+
+/* True if a gamepad input report shows the user doing something since ref */
+static bool mtnet_gamepad_active(const u8 *in, const u8 *ref, unsigned int len)
+{
+	/* Elite paddles (14 or 18) and the share button (18 or 26 from the end) */
+	const int extras[] = { 14, 18, (int)len - 18, (int)len - 26 };
+	unsigned int i;
+
+	if (get_unaligned_le16(in) != get_unaligned_le16(ref))
+		return true;
+	for (i = 2; i < MTNET_GP_INPUT_LEN; i += 2)
+		if (mtnet_axis_moved(in, ref, i, i >= 6))
+			return true;
+	for (i = 0; i < ARRAY_SIZE(extras); i++)
+		if (extras[i] >= MTNET_GP_INPUT_LEN && extras[i] < len && in[extras[i]] != ref[extras[i]])
+			return true;
+	return false;
+}
+
 /*
  * Tracks user activity for the idle timeout. Called with mtnet.lock held, on a
- * decrypted GIP packet. Controllers resend their input report unchanged while
- * nothing happens, so only a report that differs from the last one counts
- * (ignoring the GIP sequence number, byte 2). The Guide button (a virtual key)
- * and headset audio count as activity as they come.
+ * decrypted GIP packet. Controllers keep sending input reports while untouched,
+ * with timestamps that change every time and sticks that wander a little, so a
+ * gamepad report counts only for a button, or a trigger or stick moved past a
+ * deadzone from where it was at the last activity; the rest of the report is
+ * ignored. Other input reports count when anything but the sequence number
+ * changes. The Guide button (a virtual key) and headset audio count as they come.
  */
 static void mtnet_note_input(struct mtnet_client *client, const u8 *p, unsigned int len)
 {
-	unsigned int n;
+	unsigned int hdr = 3, n;
+	const u8 *body;
+	bool active;
 
-	if (len < 3)
+	if (len < 4)
 		return;
 	switch (p[0]) {
 	case MTNET_GIP_CMD_INPUT:
@@ -682,11 +723,30 @@ static void mtnet_note_input(struct mtnet_client *client, const u8 *p, unsigned 
 	default:
 		return;
 	}
-	n = min_t(unsigned int, len, sizeof(client->last_report));
-	if (n == client->last_report_len && p[1] == client->last_report[1] &&
-	    !memcmp(p + 3, client->last_report + 3, n - 3))
+	/* Header: command, options, sequence, then the length as a varint */
+	while (hdr < len && (p[hdr] & 0x80))
+		hdr++;
+	if (++hdr > len)
 		return;
-	memcpy(client->last_report, p, n);
+	body = p + hdr;
+	n = min_t(unsigned int, len - hdr, sizeof(client->last_report));
+	/*
+	 * The first report (or one with a new layout) only sets the reference:
+	 * an untouched controller can send its first one long after connecting.
+	 */
+	if (n != client->last_report_len) {
+		memcpy(client->last_report, body, n);
+		client->last_report_len = n;
+		return;
+	}
+	if (n >= MTNET_GP_INPUT_LEN)
+		active = mtnet_gamepad_active(body, client->last_report, n);
+	else
+		active = memcmp(body, client->last_report, n);
+	if (!active)
+		return;
+	/* The reference moves only with activity, so slow drift can't add up */
+	memcpy(client->last_report, body, n);
 	client->last_report_len = n;
 active:
 	client->last_input = jiffies;
@@ -965,7 +1025,7 @@ static void mtnet_timeout(struct work_struct *work)
 
 	for (i = 0; i < MTNET_MAX_CLIENTS; i++) {
 		struct mtnet_client *idle = NULL;
-		unsigned int idle_min = READ_ONCE(idle_timeout);
+		unsigned int idle_min = READ_ONCE(idle_poweroff) ? READ_ONCE(idle_timeout) : 0;
 		u8 addr[ETH_ALEN];
 		bool expired, stalled = false;
 
@@ -983,8 +1043,14 @@ static void mtnet_timeout(struct work_struct *work)
 						      msecs_to_jiffies(MTNET_SETUP_TIMEOUT_MS)) && !ready;
 			if (stalled)
 				ether_addr_copy(addr, c->address);
-			/* Idle timeout: once, until there's input again */
-			if (ready && idle_min && !c->idle_off &&
+			/*
+			 * Idle timeout: once, until there's input again. While it's off,
+			 * keep the idle time at zero, so turning it back on doesn't power
+			 * off a controller that has been sitting idle meanwhile.
+			 */
+			if (!idle_min)
+				c->last_input = jiffies;
+			else if (ready && !c->idle_off &&
 			    time_after(jiffies, c->last_input + (unsigned long)idle_min * 60 * HZ)) {
 				c->idle_off = true;
 				idle = c;

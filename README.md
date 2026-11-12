@@ -71,16 +71,27 @@ The dongle's button and LED work as usual: press the button to start pairing, an
 on while a controller is connected, and is off otherwise.
 
 Connected controllers are turned off when the computer goes to sleep, and after 15 minutes without input (moving a
-stick or trigger, pressing a button, or headset audio). Change the idle time with the `idle_timeout` module parameter,
-in minutes, or set it to `0` to keep controllers on:
+stick or trigger, pressing a button, or headset audio). Two module parameters control the idle power-off, and both
+take effect immediately when changed:
+
+- `idle_poweroff`: `Y` (default) or `N`. With `N`, controllers stay on however long they're idle. Idle time doesn't
+  build up while it's off, so turning it back on doesn't immediately power off a controller left idle meanwhile.
+- `idle_timeout`: the idle time in minutes (default 15).
 
 ```
-# for the running module
+# keep controllers on while idle, for the running module
+echo N | sudo tee /sys/module/xone_mtnet/parameters/idle_poweroff
+
+# turn them off after 30 minutes instead
+echo Y | sudo tee /sys/module/xone_mtnet/parameters/idle_poweroff
 echo 30 | sudo tee /sys/module/xone_mtnet/parameters/idle_timeout
 
-# from the next boot
-echo 'options xone_mtnet idle_timeout=30' | sudo tee /etc/modprobe.d/xone-mtnet-idle.conf
+# make it the default from the next boot
+echo 'options xone_mtnet idle_poweroff=N' | sudo tee /etc/modprobe.d/xone-mtnet-idle.conf
 ```
+
+These work under kernel lockdown and enforced module signatures too (such as Nobara's EAC kernel): they're ordinary
+module parameters of the signed module.
 
 ### Wake on wireless
 

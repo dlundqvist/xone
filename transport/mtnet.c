@@ -50,6 +50,7 @@
 #include <linux/spinlock.h>
 #include <linux/rtnetlink.h>
 #include <linux/device.h>
+#include <linux/suspend.h>
 #include <crypto/aead.h>
 #include <net/ieee80211_radiotap.h>
 #include <net/cfg80211.h>
@@ -118,6 +119,18 @@ static bool pairing;
 module_param(pairing, bool, 0644);
 MODULE_PARM_DESC(pairing, "Announce pairing mode in the beacon, for up to 60 seconds");
 
+/* GIP commands that count as the user doing something (see mtnet_note_input) */
+#define MTNET_GIP_CMD_VIRTUAL_KEY 0x07
+#define MTNET_GIP_CMD_INPUT 0x20
+#define MTNET_GIP_CMD_AUDIO_SAMPLES 0x60
+/* How long a powered-off controller gets to go quiet before the system sleeps */
+#define MTNET_PWR_OFF_TIMEOUT_MS 5000
+#define MTNET_PWR_OFF_QUIET_MS 1000
+
+static unsigned int idle_timeout = 15;
+module_param(idle_timeout, uint, 0644);
+MODULE_PARM_DESC(idle_timeout, "Minutes without input before a controller is turned off (0 = never)");
+
 /* Version 0, 9 bytes long, with the rate field: 6 Mb/s in 500 kb/s units */
 static const u8 mtnet_radiotap[] = { 0, 0, 9, 0, 0x04, 0, 0, 0, 12 };
 
@@ -134,6 +147,11 @@ struct mtnet_client {
 	unsigned int plain_frames;
 	struct crypto_aead *aead;
 	struct gip_adapter *adapter;
+	/* Idle timeout: when the user last did something, and the last input report */
+	unsigned long last_input;
+	bool idle_off;
+	u8 last_report[64];
+	u8 last_report_len;
 };
 
 struct mtnet_event {
@@ -161,6 +179,7 @@ static struct {
 	struct hrtimer beacon_timer;
 	struct delayed_work timeout_work;
 	struct delayed_work keepalive_work;
+	struct work_struct poweroff_work;
 	struct workqueue_struct *wq;
 	/* Beacons and keepalives can't wait for USB requests or client teardown */
 	struct workqueue_struct *txwq;
@@ -555,6 +574,7 @@ static void mtnet_associate(const u8 *addr, u16 resp_stype)
 	ether_addr_copy(client->address, addr);
 	client->last_rx = jiffies;
 	client->added = jiffies;
+	client->last_input = jiffies;
 	client->adapter = gip_create_adapter(&mtnet.ndev->dev, &mtnet_adapter_ops, 1);
 	if (IS_ERR(client->adapter)) {
 		netdev_err(mtnet.ndev, "could not create adapter: %ld\n", PTR_ERR(client->adapter));
@@ -640,6 +660,39 @@ static void mtnet_stale_session(struct mtnet_client *client)
 	mtnet_queue_event(MTNET_STALE_SESSION, client->address, 0);
 }
 
+/*
+ * Tracks user activity for the idle timeout. Called with mtnet.lock held, on a
+ * decrypted GIP packet. Controllers resend their input report unchanged while
+ * nothing happens, so only a report that differs from the last one counts
+ * (ignoring the GIP sequence number, byte 2). The Guide button (a virtual key)
+ * and headset audio count as activity as they come.
+ */
+static void mtnet_note_input(struct mtnet_client *client, const u8 *p, unsigned int len)
+{
+	unsigned int n;
+
+	if (len < 3)
+		return;
+	switch (p[0]) {
+	case MTNET_GIP_CMD_INPUT:
+		break;
+	case MTNET_GIP_CMD_VIRTUAL_KEY:
+	case MTNET_GIP_CMD_AUDIO_SAMPLES:
+		goto active;
+	default:
+		return;
+	}
+	n = min_t(unsigned int, len, sizeof(client->last_report));
+	if (n == client->last_report_len && p[1] == client->last_report[1] &&
+	    !memcmp(p + 3, client->last_report + 3, n - 3))
+		return;
+	memcpy(client->last_report, p, n);
+	client->last_report_len = n;
+active:
+	client->last_input = jiffies;
+	client->idle_off = false;
+}
+
 static void mtnet_rx_data(struct sk_buff *skb, u8 *f, unsigned int len)
 {
 	u16 fc = get_unaligned_le16(f);
@@ -707,6 +760,7 @@ static void mtnet_rx_data(struct sk_buff *skb, u8 *f, unsigned int len)
 		mtnet_stale_session(client);
 		goto out;
 	}
+	mtnet_note_input(client, payload, plen);
 	gip_process_buffer(client->adapter, payload, plen);
 out:
 	spin_unlock_irqrestore(&mtnet.lock, flags);
@@ -910,6 +964,8 @@ static void mtnet_timeout(struct work_struct *work)
 		WRITE_ONCE(pairing, false);
 
 	for (i = 0; i < MTNET_MAX_CLIENTS; i++) {
+		struct mtnet_client *idle = NULL;
+		unsigned int idle_min = READ_ONCE(idle_timeout);
 		u8 addr[ETH_ALEN];
 		bool expired, stalled = false;
 
@@ -920,15 +976,27 @@ static void mtnet_timeout(struct work_struct *work)
 		if (mtnet.clients[i] && !expired) {
 			struct mtnet_client *c = mtnet.clients[i];
 			struct gip_client *gc = c->adapter->clients[0];
+			bool ready = gc && device_is_registered(&gc->dev);
 
 			/* A lost setup packet is never resent, so start the client over */
 			stalled = time_after(jiffies, c->added +
-						      msecs_to_jiffies(MTNET_SETUP_TIMEOUT_MS)) &&
-				  (!gc || !device_is_registered(&gc->dev));
+						      msecs_to_jiffies(MTNET_SETUP_TIMEOUT_MS)) && !ready;
 			if (stalled)
 				ether_addr_copy(addr, c->address);
+			/* Idle timeout: once, until there's input again */
+			if (ready && idle_min && !c->idle_off &&
+			    time_after(jiffies, c->last_input + (unsigned long)idle_min * 60 * HZ)) {
+				c->idle_off = true;
+				idle = c;
+			}
 		}
 		spin_unlock_irqrestore(&mtnet.lock, flags);
+		/* Clients are only freed on this (ordered) workqueue, so idle stays valid */
+		if (idle) {
+			netdev_info(mtnet.ndev, "turning off %pM after %u minutes without input\n",
+				    idle->address, idle_min);
+			gip_power_off_adapter(idle->adapter);
+		}
 		if (expired)
 			mtnet_remove_client(i);
 		if (stalled) {
@@ -1432,6 +1500,71 @@ static void mtnet_reprobe_after_resume(struct usb_interface *intf)
 	netdev_info(mtnet.ndev, "resumed, re-probing the dongle\n");
 }
 
+/* Runs on the ordered mtnet.wq, which is the only place clients are freed */
+static void mtnet_power_off_clients(struct work_struct *work)
+{
+	int i;
+
+	for (i = 0; i < MTNET_MAX_CLIENTS; i++)
+		if (mtnet.clients[i])
+			gip_power_off_adapter(mtnet.clients[i]->adapter);
+}
+
+/* True while any client was heard from within the last MTNET_PWR_OFF_QUIET_MS */
+static bool mtnet_clients_awake(void)
+{
+	unsigned long flags;
+	bool awake = false;
+	int i;
+
+	spin_lock_irqsave(&mtnet.lock, flags);
+	for (i = 0; i < MTNET_MAX_CLIENTS; i++)
+		if (mtnet.clients[i] &&
+		    time_before(jiffies, mtnet.clients[i]->last_rx +
+					 msecs_to_jiffies(MTNET_PWR_OFF_QUIET_MS)))
+			awake = true;
+	spin_unlock_irqrestore(&mtnet.lock, flags);
+	return awake;
+}
+
+/*
+ * Turn the controllers off before the system sleeps, as xone_dongle does in its
+ * .suspend. It has to happen here, before anything is frozen: by the time
+ * mt76x2u's .suspend runs, mac80211 has stopped the radio, so nothing can be
+ * sent. A controller left on keeps transmitting to the sleeping dongle, which
+ * wakes the system straight back up. Power-off is resent each second until the
+ * controllers go quiet (or after MTNET_PWR_OFF_TIMEOUT_MS, in case one is
+ * turned on again meanwhile).
+ */
+static int mtnet_pm_notify(struct notifier_block *nb, unsigned long action, void *data)
+{
+	unsigned long deadline, next = 0;
+
+	if (action != PM_SUSPEND_PREPARE && action != PM_HIBERNATION_PREPARE)
+		return NOTIFY_DONE;
+	if (!READ_ONCE(mtnet.running) || !mtnet_clients_awake())
+		return NOTIFY_DONE;
+
+	WRITE_ONCE(pairing, false);
+	deadline = jiffies + msecs_to_jiffies(MTNET_PWR_OFF_TIMEOUT_MS);
+	while (READ_ONCE(mtnet.running) && mtnet_clients_awake() &&
+	       time_before(jiffies, deadline)) {
+		if (time_after_eq(jiffies, next)) {
+			queue_work(mtnet.wq, &mtnet.poweroff_work);
+			flush_work(&mtnet.poweroff_work);
+			next = jiffies + HZ;
+		}
+		msleep(50);
+	}
+	if (mtnet_clients_awake())
+		pr_info("xone_mtnet: a controller is still on as the system sleeps\n");
+	else
+		pr_info("xone_mtnet: controllers turned off for system sleep\n");
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block mtnet_pm_nb = { .notifier_call = mtnet_pm_notify };
+
 static int mtnet_suspend_wrap(struct usb_interface *intf, pm_message_t message)
 {
 	if (READ_ONCE(mtnet.running)) {
@@ -1600,11 +1733,14 @@ static int __init mtnet_init(void)
 	INIT_DELAYED_WORK(&mtnet.timeout_work, mtnet_timeout);
 	INIT_DELAYED_WORK(&mtnet.keepalive_work, mtnet_keepalive);
 	INIT_DELAYED_WORK(&mtnet.button_work, mtnet_button);
+	INIT_WORK(&mtnet.poweroff_work, mtnet_power_off_clients);
 	mtnet.ptype.type = htons(ETH_P_ALL);
 	mtnet.ptype.func = mtnet_rx;
+	register_pm_notifier(&mtnet_pm_nb);
 	/* Also reports interfaces that are already up */
 	err = register_netdevice_notifier(&mtnet_nb);
 	if (err) {
+		unregister_pm_notifier(&mtnet_pm_nb);
 		destroy_workqueue(mtnet.txwq);
 		destroy_workqueue(mtnet.wq);
 		kfree(mtnet.regbuf);
@@ -1614,6 +1750,7 @@ static int __init mtnet_init(void)
 
 static void __exit mtnet_exit(void)
 {
+	unregister_pm_notifier(&mtnet_pm_nb);
 	/* Reports every interface as going down, which stops the transport */
 	unregister_netdevice_notifier(&mtnet_nb);
 	destroy_workqueue(mtnet.txwq);

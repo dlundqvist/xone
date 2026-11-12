@@ -70,6 +70,18 @@ use the `xone_dongle` module and Microsoft's firmware (see *Dongles that need Mi
 The dongle's button and LED work as usual: press the button to start pairing, and the LED blinks while pairing, stays
 on while a controller is connected, and is off otherwise.
 
+Connected controllers are turned off when the computer goes to sleep, and after 15 minutes without input (moving a
+stick or trigger, pressing a button, or headset audio). Change the idle time with the `idle_timeout` module parameter,
+in minutes, or set it to `0` to keep controllers on:
+
+```
+# for the running module
+echo 30 | sudo tee /sys/module/xone_mtnet/parameters/idle_timeout
+
+# from the next boot
+echo 'options xone_mtnet idle_timeout=30' | sudo tee /etc/modprobe.d/xone-mtnet-idle.conf
+```
+
 ### Wake on wireless
 
 With `xone_mtnet`, turning on a paired controller wakes the computer from suspend (the `wake` module parameter, on by
@@ -270,7 +282,8 @@ With Microsoft's firmware, use `/sys/bus/usb/drivers/xone-dongle/*/pairing` inst
 
 ## Number of active clients and forcing poweroff
 
-These are only available with Microsoft's firmware.
+These are only available with Microsoft's firmware. With `xone_mtnet`, controllers are powered off automatically when
+idle and when the computer sleeps (see *Wireless dongle*).
 
 ```
 # show number of connected controllers

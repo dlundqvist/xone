@@ -37,7 +37,7 @@ Always update your Xbox devices to the latest firmware version!
 - [x] Battery reporting (`UPower` integration)
 - [x] LED control (using `/sys/class/leds`)
 - [x] Audio capture/playback (through `ALSA`)
-- [x] Power management (suspend/resume and remote/wireless wakeup)
+- [x] Power management (suspend/resume, and remote wakeup over USB)
 
 ## Supported devices
 
@@ -57,6 +57,74 @@ Always update your Xbox devices to the latest firmware version!
     - [x] PDP Rock Band 4 Wireless Fender Jaguar
 - [x] Xbox One Chatpad
 - [ ] Third party racing wheels (Thrustmaster, Logitech, etc.)
+
+## Wireless dongle
+
+The new Xbox Wireless Dongle (`045e:02fe`) runs on the kernel's `mt76x2u` driver and Mediatek's firmware from
+`linux-firmware`, through the `xone_mtnet` module. No firmware from Microsoft is needed. `make install` sets this up,
+and the dongle is ready once it's replugged.
+
+The old dongle (`045e:02e6`) and the built-in dongles (`045e:02f9` and `045e:091e`) don't run on `mt76x2u`, so they
+use the `xone_dongle` module and Microsoft's firmware (see *Dongles that need Microsoft's firmware*).
+
+The dongle's button and LED work as usual: press the button to start pairing, and the LED blinks while pairing, stays
+on while a controller is connected, and is off otherwise.
+
+Connected controllers are turned off when the computer goes to sleep, and after 15 minutes without input (moving a
+stick or trigger, pressing a button, or headset audio). Two module parameters control the idle power-off, and both
+take effect immediately when changed:
+
+- `idle_poweroff`: `Y` (default) or `N`. With `N`, controllers stay on however long they're idle. Idle time doesn't
+  build up while it's off, so turning it back on doesn't immediately power off a controller left idle meanwhile.
+- `idle_timeout`: the idle time in minutes (default 15).
+
+```
+# keep controllers on while idle, for the running module
+echo N | sudo tee /sys/module/xone_mtnet/parameters/idle_poweroff
+
+# turn them off after 30 minutes instead
+echo Y | sudo tee /sys/module/xone_mtnet/parameters/idle_poweroff
+echo 30 | sudo tee /sys/module/xone_mtnet/parameters/idle_timeout
+
+# make it the default from the next boot
+echo 'options xone_mtnet idle_poweroff=N' | sudo tee /etc/modprobe.d/xone-mtnet-idle.conf
+```
+
+These work under kernel lockdown and enforced module signatures too (such as Nobara's EAC kernel): they're ordinary
+module parameters of the signed module.
+
+### Wake on wireless
+
+With `xone_mtnet`, turning on a paired controller wakes the computer from suspend (the `wake` module parameter, on by
+default). It works with whichever sleep mode the system uses, s2idle or S3 (deep), and has been tested with both. For
+S3 the motherboard has to keep the USB port powered while asleep and allow USB devices to wake it; on some boards that
+is a firmware setup option. After waking, the dongle is re-probed and the controller reconnects within a few seconds.
+
+Known limits:
+
+- The channel is fixed, and channel 153 is the default. Set a different one with the `channel` module parameter. Unlike
+  Microsoft's firmware, the module doesn't look for a quiet channel. Only channel 153 has been tested since the timing
+  fixes, and channels 36 and 40 dropped controllers before them.
+- More than one dongle isn't supported.
+- Waking takes up to about 10 seconds longer than the controller's normal connection time, because the dongle checks
+  for a controller about every 10 seconds while the computer sleeps.
+- Wake on wireless relies on a small patch to Mediatek's firmware in the dongle's memory that is specific to the
+  firmware build in `linux-firmware`.
+- Only the Xbox One S (1708) and Elite Series 1 controllers have been tested. Wireless headset audio is untested.
+
+### Dongles that need Microsoft's firmware
+
+The `xone_dongle` module drives the old and built-in dongles with Microsoft's firmware. The firmware can't be
+redistributed, so it's downloaded from Microsoft, under Microsoft's Terms of Use, and needs `curl` and `bsdtar`:
+
+```shell
+sudo ./install/firmware.sh
+```
+
+The new dongle (`045e:02fe`) always uses `xone_mtnet`; `xone_dongle` no longer claims it.
+
+> [!TIP]
+> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02e6.bin`
 
 ## Releases
 
@@ -108,8 +176,7 @@ make clean
 
 - Linux (kernel 5.13+ and headers)
 - DKMS
-- curl (for firmware download)
-- bsdtar (for firmware extraction)
+- iw (to set up the wireless dongle)
 - For SecureBoot-enabled systems see [SecureBoot dkms guide](https://github.com/dell/dkms#secure-boot)
 
 ### Guide
@@ -131,18 +198,7 @@ sudo make install
 
 **NOTE:** You can use the `install-debug` target instead to enable debug logging.
 
-4. Download the firmware for the wireless dongle (optional, makefile automatically installs firmware):
-
-```
-sudo install/firmware.sh
-```
-> [!NOTE]
-> The `--skip-disclaimer` flag might be useful for scripting purposes.
-
-> [!TIP]
-> The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02fe.bin`
-
-5. Plug in your Xbox devices.
+4. Plug in your Xbox devices.
 
 ### Updating
 
@@ -223,16 +279,23 @@ The modes and the maximum brightness can vary from device to device.
 The pairing mode of the dongle can be queried via `sysfs`:
 
 ```
-cat /sys/bus/usb/drivers/xone-dongle/*/pairing
+cat /sys/module/xone_mtnet/parameters/pairing
 ```
 
-You can enable (`1`) or disable (`0`) the pairing using the following command:
+You can enable (`1`) or disable (`0`) the pairing using the following command. Pairing mode ends by itself after 60
+seconds or when a controller pairs.
 
 ```
-echo 1 | sudo tee /sys/bus/usb/drivers/xone-dongle/*/pairing
+echo 1 | sudo tee /sys/module/xone_mtnet/parameters/pairing
 ```
+
+With Microsoft's firmware, use `/sys/bus/usb/drivers/xone-dongle/*/pairing` instead.
 
 ## Number of active clients and forcing poweroff
+
+These are only available with Microsoft's firmware. With `xone_mtnet`, controllers are powered off automatically when
+idle and when the computer sleeps (see *Wireless dongle*).
+
 ```
 # show number of connected controllers
 cat /sys/bus/usb/drivers/xone-dongle/*/active_clients
@@ -252,8 +315,9 @@ If `xone` is not being loaded automatically you might have to reboot your system
 
 ### Error messages
 
-- `Direct firmware load for xow_dongle.bin failed with error -2`
-    - Download the firmware for the wireless dongle (see installation guide).
+- `Direct firmware load for xone_dongle_02fe.bin failed with error -2`
+    - An old or built-in dongle is in use but Microsoft's firmware isn't installed. Download it (see *Dongles that need
+      Microsoft's firmware*).
 
 ### Input issues
 

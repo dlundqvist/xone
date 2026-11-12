@@ -1,0 +1,4 @@
+# Runs the new Xbox wireless dongle (045e:02fe) on mt76x2u and xone_mtnet instead
+# of as a Wi-Fi adapter. The old dongle (045e:02e6) does not bind mt76x2u and stays
+# on xone_dongle, so it is deliberately not matched here.
+ACTION=="add", SUBSYSTEM=="net", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="02fe", ENV{NM_UNMANAGED}="1", RUN+="/usr/libexec/xone-mtnet-setup $attr{ifindex}"

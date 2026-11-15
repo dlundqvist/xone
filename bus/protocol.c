@@ -1387,11 +1387,15 @@ static int gip_handle_pkt_audio_volume_chat(struct gip_client *client,
 	if (len != sizeof(*pkt))
 		return -EINVAL;
 
+	gip_dbg(client, "%s: mute=0x%02x in=%u out=%u\n", __func__,
+		pkt->mute, pkt->in, pkt->out);
+
 	if (down_trylock(&client->drv_lock))
 		return -EBUSY;
 
 	if (client->drv && client->drv->ops.audio_volume)
-		err = client->drv->ops.audio_volume(client, pkt->in, pkt->out);
+		err = client->drv->ops.audio_volume(client, pkt->in, pkt->out,
+						    pkt->mute == GIP_AUD_VOLUME_MIC_MUTED);
 
 	up(&client->drv_lock);
 
@@ -1449,11 +1453,15 @@ static int gip_handle_pkt_audio_volume(struct gip_client *client,
 	if (len != sizeof(*pkt))
 		return -EINVAL;
 
+	gip_dbg(client, "%s: mute=0x%02x in=%u out=%u\n", __func__,
+		pkt->mute, pkt->in, pkt->out);
+
 	if (down_trylock(&client->drv_lock))
 		return -EBUSY;
 
 	if (client->drv && client->drv->ops.audio_volume)
-		err = client->drv->ops.audio_volume(client, pkt->in, pkt->out);
+		err = client->drv->ops.audio_volume(client, pkt->in, pkt->out,
+						    pkt->mute == GIP_AUD_VOLUME_MIC_MUTED);
 
 	up(&client->drv_lock);
 

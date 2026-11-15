@@ -8,6 +8,10 @@
 #include <linux/timer.h>
 #include <linux/version.h>
 
+#ifndef from_timer
+#define from_timer timer_container_of
+#endif
+
 #include "common.h"
 #include "../auth/auth.h"
 

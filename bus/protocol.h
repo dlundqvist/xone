@@ -84,6 +84,10 @@ struct gip_hardware {
 	u16 vendor;
 	u16 product;
 	u16 version;
+
+	/* major, minor, build, revision as announced by the device */
+	u16 fw_version[4];
+	u16 hw_version[4];
 };
 
 struct gip_info_element {

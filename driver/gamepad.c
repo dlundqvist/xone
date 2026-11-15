@@ -15,6 +15,7 @@
 
 #define GIP_VENDOR_MICROSOFT 0x045e
 #define GIP_PRODUCT_ELITE_SERIES_2 0x0b00
+#define GIP_PRODUCT_ELITE_SERIES_2_BT 0x0b22
 #define GIP_PRODUCT_ELITE 0x02e3
 
 /*
@@ -519,6 +520,16 @@ static int gip_gamepad_probe(struct gip_client *client)
 	err = gip_init_input(&gamepad->input, client, GIP_GP_NAME);
 	if (err)
 		return err;
+
+	/*
+	 * Steam only recognizes the Elite Series 2 (and its paddles) under
+	 * the product ID the controller uses over Bluetooth.
+	 * There is an open issue: https://github.com/ValveSoftware/steam-for-linux/issues/8463
+	 * Revert and re-test once upstream is fixed.
+	 */
+	if (client->hardware.vendor == GIP_VENDOR_MICROSOFT &&
+	    client->hardware.product == GIP_PRODUCT_ELITE_SERIES_2)
+		gamepad->input.dev->id.product = GIP_PRODUCT_ELITE_SERIES_2_BT;
 
 	err = gip_gamepad_init_input(gamepad);
 	if (err)

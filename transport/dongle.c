@@ -30,6 +30,12 @@ module_param_named(fw_override, fw_override_pid, ushort, 0600);
 
 #define XONE_DONGLE_MAX_CLIENTS 16
 
+#define CONFIG_PM 1
+
+/* autosuspend delay in ms */
+//GK: Reduced to 6s instead of 60s
+#define XONE_DONGLE_SUSPEND_DELAY 6000
+
 #define XONE_DONGLE_PAIRING_TIMEOUT 60 // seconds
 #define XONE_DONGLE_PAIR_SCAN_INTERVAL msecs_to_jiffies(2000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
@@ -280,6 +286,7 @@ static int xone_dongle_pairing_handler(struct xone_dongle *dongle, bool enable,
 	dev_dbg(dongle->mt.dev, "%s: enabled=%d\n", __func__, enable);
 	dongle->pairing = enable;
 
+	//GK: Disable/Enable auto suspension when pairing to avoid timeout
 	if (enable) {
 		dongle->last_wlan_rx = jiffies;
 		dongle->pairing_scan_idx = xone_dongle_find_channel_idx(dongle);
@@ -287,8 +294,10 @@ static int xone_dongle_pairing_handler(struct xone_dongle *dongle, bool enable,
 				 msecs_to_jiffies(timeout_secs * 1000));
 		mod_delayed_work(system_wq, &dongle->pairing_scan_work,
 				 XONE_DONGLE_PAIR_SCAN_INTERVAL);
+		usb_autopm_get_interface(to_usb_interface(dongle->mt.dev));
 	} else {
 		cancel_delayed_work(&dongle->pairing_scan_work);
+		usb_autopm_put_interface(to_usb_interface(dongle->mt.dev));
 	}
 
 err_unlock:
@@ -548,6 +557,7 @@ static int xone_dongle_add_client(struct xone_dongle *dongle, u8 *addr)
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 
 	atomic_inc(&dongle->client_count);
+	usb_autopm_get_interface(to_usb_interface(dongle->mt.dev));
 
 	return 0;
 
@@ -588,6 +598,7 @@ static int xone_dongle_remove_client(struct xone_dongle *dongle, u8 wcid)
 		err = xone_mt76_set_led_mode(&dongle->mt, XONE_MT_LED_OFF);
 
 	wake_up(&dongle->disconnect_wait);
+	usb_autopm_put_interface(to_usb_interface(dongle->mt.dev));
 	return err;
 }
 
@@ -1181,7 +1192,14 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	dongle->fw_state = XONE_DONGLE_FW_STATE_READY;
 
 	device_wakeup_enable(&dongle->mt.udev->dev);
+	pm_runtime_set_autosuspend_delay(&dongle->mt.udev->dev,
+					 XONE_DONGLE_SUSPEND_DELAY);
+	usb_enable_autosuspend(dongle->mt.udev);
 
+	/*
+	* GK: Unecessary. Proper dongle suspension handles better the strict RX filter 
+	* and can allow the reconnection of already paired controllers
+	*/
 	/*
 	 * xone_mt76_init_radio() ends with xone_mt76_set_pairing(false),
 	 * which sets the beacon pair flag to 0 and a restrictive RX filter.
@@ -1194,10 +1212,10 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	 * (24 s per full cycle), so the timeout must be long enough for
 	 * at least two full cycles.  Use the default 60 s timeout.
 	 */
-	err = xone_dongle_toggle_pairing(dongle, true);
-	if (err)
-		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
-			__func__, err);
+	// err = xone_dongle_toggle_pairing(dongle, true);
+	// if (err)
+	// 	dev_err(mt->dev, "%s: enable pairing failed: %d\n",
+	// 		__func__, err);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle)
@@ -1573,7 +1591,7 @@ static struct usb_driver xone_dongle_driver = {
 #endif
 	.pre_reset = xone_dongle_pre_reset,
 	.post_reset = xone_dongle_post_reset,
-	.supports_autosuspend = false,
+	.supports_autosuspend = true,
 	.disable_hub_initiated_lpm = true,
 	.soft_unbind = true,
 };

@@ -1057,6 +1057,11 @@ int xone_mt76_suspend_radio(struct xone_mt76 *mt)
 	if (err)
 		return err;
 
+	//GK: Why that power mode was never used??? It seems to be the perfect fit for WOW
+	err = xone_mt76_set_power_mode(mt, MT_RADIO_OFF_AUTO_WAKEUP);
+	if (err)
+		return err;
+
 	dev_dbg(mt->dev, "%s: suspended\n", __func__);
 
 	return 0;

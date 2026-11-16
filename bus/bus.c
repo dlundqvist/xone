@@ -223,8 +223,9 @@ static void gip_register_client(struct work_struct *work)
 	 *
 	 * The unfortunate workaround, that at least works reliably is to add a
 	 * delay here. Since this is for human input device, one second is fine.
+	 * Only applied to id=0 in order to skip sleep delay for non-primary clients (chatpad fix)
 	 */
-	msleep(700);
+	 if (client->id == 0) msleep(700);
 
 	client->dev.parent = &client->adapter->dev;
 	client->dev.type = &gip_client_type;

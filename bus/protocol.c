@@ -323,6 +323,17 @@ static int gip_decode_header(struct gip_header *hdr, u8 *data, int len)
 	return hdr_len;
 }
 
+static int gip_has_capability(struct gip_info_element *caps, u8 command)
+{
+  for(int i=0; i<caps->count; i++) {
+    if (caps->data[i] == command) {
+      return 0;
+    }
+  }
+  return -ENOTSUPP;
+}
+
+
 static int gip_init_chunk_buffer(struct gip_client *client,
 				 struct gip_header *hdr,
 				 struct gip_chunk_buffer **buf,
@@ -388,6 +399,15 @@ static int gip_send_pkt_simple(struct gip_client *client,
 
 	/* set actual length */
 	buf.length = hdr_len + hdr->packet_length;
+
+	gip_dbg(client, "%s:  seq=0x%02x, cmd=0x%02x, len=0x%04x flags=[%s %s %s] pkt=[%*ph]\n",
+		__func__,
+    hdr->sequence,
+		hdr->command, hdr->packet_length,
+		hdr->options & GIP_OPT_CHUNK_START? "Ini":"...",
+		hdr->options & GIP_OPT_ACKNOWLEDGE? "Ack":"...",
+		hdr->options & GIP_OPT_INTERNAL? "Sys":"...",
+    buf.length,buf.data);
 
 	/* debug message sent */
 	// gip_dbg(client, "%s: cmd=0x%02x len=0x%04x seq=0x%02x offset=0x%04x\n",
@@ -455,8 +475,8 @@ static int gip_acknowledge_pkt(struct gip_client *client,
 	if ((ack->options & GIP_OPT_CHUNK) && buf)
 		pkt.remaining = cpu_to_le16(buf->length - len);
 
-	// gip_dbg(client, "%s: ACME(host) command=0x%02x, length=0x%04x\n",
-	// 	__func__, pkt.command, len);
+	gip_dbg(client, "%s:  seq=0x%02x, cmd=0x%02x, len=0x%04x ACME(host)\n",
+	        __func__, hdr.sequence, pkt.command, len);
 
 	return gip_send_pkt(client, &hdr, &pkt);
 }
@@ -494,6 +514,12 @@ int gip_send_authenticate(struct gip_client *client, void *pkt, u32 len,
 	hdr.command = GIP_CMD_AUTHENTICATE;
 	hdr.options = client->id | GIP_OPT_INTERNAL;
 	hdr.packet_length = len;
+
+  /* sequence number is always greater than zero */
+  if (!++client->adapter->auth_sequence)
+    ++client->adapter->auth_sequence;
+
+  hdr.sequence = client->adapter->auth_sequence;
 
 	if (acknowledge)
 		hdr.options |= GIP_OPT_ACKNOWLEDGE;
@@ -611,6 +637,11 @@ EXPORT_SYMBOL_GPL(gip_set_led_mode);
 
 int gip_send_get_serial_number(struct gip_client *client)
 {
+  int ierr = gip_has_capability(client->capabilities_out, GIP_CMD_EXTENDED);
+  if (ierr) {
+    gip_warn(client,"%s: no GIP_OPT_INTERNAL capability, skipping message.",__func__);
+    return ierr;
+  }
 	struct gip_header hdr = {
 		.command = GIP_CMD_EXTENDED,
 		.options = client->id | GIP_OPT_INTERNAL,
@@ -1118,11 +1149,15 @@ static int gip_handle_pkt_acknowledge(struct gip_client *client,
 	if (len != sizeof(*pkt))
 		return -EINVAL;
 
-	if (!buf)
-		return 0;
+	if (!buf) {
+    gip_dbg(client, "%s:     cmd=0x%02x, len=0x%04x ACME(dev)\n",
+      __func__, pkt->command, le16_to_cpu(pkt->length));
 
-	gip_dbg(client, "%s: ACME(dev) cmd=0x%02x/0x%02x, len=0x%04x/0x%04x\n",
-		__func__, pkt->command, buf->header.command,
+		return 0;
+  }
+
+	gip_dbg(client, "%s: seq=0x%02x, cmd=0x%02x, len=0x%04x/0x%04x ACME(dev)\n",
+		__func__, buf->header.sequence, pkt->command, 
 		le16_to_cpu(pkt->length), buf->length);
 
 	/* acknowledgment for different command */
@@ -1609,11 +1644,8 @@ static int gip_process_pkt_chunked(struct gip_client *client,
 	int err;
 	u32 len;
 
-	gip_dbg(client, "%s: flags=[%s %s %s], offset=0x%04x, length=0x%04x\n",
+	gip_dbg(client, "%s: offset=0x%04x, length=0x%04x\n",
 		__func__,
-		hdr->options & GIP_OPT_CHUNK_START? "Ini":"...",
-		hdr->options & GIP_OPT_ACKNOWLEDGE? "Ack":"...",
-		hdr->options & GIP_OPT_INTERNAL? "Sys":"...",
 		hdr->chunk_offset, hdr->packet_length);
 
 	if (!buf) {
@@ -1674,6 +1706,7 @@ static int gip_process_pkt(struct gip_client *client,
 		hdr->chunk_offset = 0;
 	}
 
+	/* some gamepads send empty packets with chunk flag : dispatch them */
 	if (hdr->options & GIP_OPT_CHUNK)
 		return gip_process_pkt_chunked(client, hdr, data);
 
@@ -1700,6 +1733,15 @@ int gip_process_buffer(struct gip_adapter *adap, void *data, int len)
 		client = gip_get_client(adap, hdr.options & GIP_HDR_CLIENT_ID);
 		if (IS_ERR(client))
 			return PTR_ERR(client);
+
+    gip_dbg(client, "%s:   seq=0x%02x, cmd=0x%02x, len=0x%04x flags=[%s %s %s] data=[%*ph]\n",
+      __func__,
+      hdr.sequence,
+      hdr.command, hdr.packet_length,
+      hdr.options & GIP_OPT_CHUNK_START? "Ini":"...",
+      hdr.options & GIP_OPT_ACKNOWLEDGE? "Ack":"...",
+      hdr.options & GIP_OPT_INTERNAL? "Sys":"...",
+      len,data);
 
 		err = gip_process_pkt(client, &hdr, data + hdr_len);
 		if (err)

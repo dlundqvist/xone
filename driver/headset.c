@@ -23,6 +23,7 @@
 #define GIP_HS_MAX_RETRIES 6
 #define GIP_HS_POWER_ON_DELAY msecs_to_jiffies(250)
 #define GIP_HS_START_DELAY msecs_to_jiffies(500)
+#define GIP_HS_AUTH_DELAY msecs_to_jiffies(50)
 
 static struct gip_vidpid GIP_HS_CHECK_AUTH_IDS[] = {
 	{ 0x1532, 0x0a16 }, // Razer Thresher
@@ -57,6 +58,10 @@ struct gip_headset {
 	int start_counter;
 	bool got_initial_volume;
 	bool got_audio_packet;
+
+  void *auth_pkt;
+  u32 auth_pkt_sz;
+	struct delayed_work work_auth_delay;
 
 	struct hrtimer timer;
 	struct hrtimer start_audio_timer;
@@ -347,6 +352,31 @@ static void gip_headset_config(struct work_struct *work)
 			__func__, err);
 }
 
+static void gip_headset_op_auth_delayed(struct work_struct *work)
+{
+	struct gip_headset *headset = container_of(
+		to_delayed_work(work), typeof(*headset), work_power_on);
+	struct gip_client *client = headset->client;
+	const struct device *dev = &client->adapter->dev;
+
+  if (!headset->auth_pkt)
+  {
+    dev_err(dev, "%s: headset delayed auth msg has no buffer allocated.\n",
+            __func__);
+    return;
+  }
+
+  int err = gip_auth_process_pkt(&headset->auth, headset->auth_pkt, headset->auth_pkt_sz);
+  if (err)
+  {
+    dev_err(dev, "%s: headset auth command failed err=%d.\n", __func__, err);
+  }
+
+  kfree(headset->auth_pkt);
+  headset->auth_pkt = NULL;
+  headset->auth_pkt_sz = 0;
+}
+
 static void gip_headset_power_on(struct work_struct *work)
 {
 	struct gip_headset *headset = container_of(
@@ -455,7 +485,15 @@ static int gip_headset_op_authenticate(struct gip_client *client,
 {
 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
 
-	return gip_auth_process_pkt(&headset->auth, data, len);
+	headset->auth_pkt = kzalloc(len, GFP_ATOMIC);
+	if (!headset->auth_pkt)
+		return -ENOMEM;
+
+  memcpy(headset->auth_pkt, data, len);
+  headset->auth_pkt_sz = len;
+  schedule_delayed_work(&headset->work_auth_delay, GIP_HS_AUTH_DELAY);
+
+	return 0;
 }
 
 static int gip_headset_op_authenticated(struct gip_client *client)
@@ -541,6 +579,7 @@ static int gip_headset_probe(struct gip_client *client)
 
 	INIT_WORK(&headset->work_config, gip_headset_config);
 	INIT_DELAYED_WORK(&headset->work_power_on, gip_headset_power_on);
+	INIT_DELAYED_WORK(&headset->work_auth_delay, gip_headset_op_auth_delayed);
 	INIT_WORK(&headset->work_register, gip_headset_register);
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0)
@@ -573,6 +612,7 @@ static void gip_headset_remove(struct gip_client *client)
 
 	cancel_work_sync(&headset->work_config);
 	cancel_delayed_work_sync(&headset->work_power_on);
+	cancel_delayed_work_sync(&headset->work_auth_delay);
 	cancel_work_sync(&headset->work_register);
 	hrtimer_cancel(&headset->timer);
 	hrtimer_cancel(&headset->start_audio_timer);

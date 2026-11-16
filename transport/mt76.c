@@ -1075,9 +1075,32 @@ int xone_mt76_resume_radio(struct xone_mt76 *mt)
 	if (err)
 		return err;
 
+	/*
+	 * The RF front end does not survive a system suspend: the MCU leaves
+	 * MT_RADIO_ON and the RXDCOC/RC/temperature calibrations applied by
+	 * init_radio() are lost. The MAC layer does survive, so the dongle
+	 * still beacons and a controller still associates - but an
+	 * uncalibrated RF path cannot sustain the link, so it collapses a few
+	 * seconds later and the controller reassociates every ~10s forever.
+	 *
+	 * Restore the radio power mode and redo the calibration, mirroring
+	 * init_radio(). calibrate_radio() leaves MT_MAC_SYS_CTRL with RX and
+	 * TX enabled; it is re-applied below after the channel switch.
+	 */
+	err = xone_mt76_set_power_mode(mt, MT_RADIO_ON);
+	if (err)
+		return err;
+
+	err = xone_mt76_calibrate_radio(mt);
+	if (err)
+		return err;
+
 	err = xone_mt76_switch_channel(mt, mt->channel);
 	if (err)
 		return err;
+
+	/* mandatory delay after channel change */
+	msleep(1000);
 
 	err = xone_mt76_set_pairing(mt, false);
 	if (err)

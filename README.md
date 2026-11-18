@@ -60,12 +60,12 @@ Always update your Xbox devices to the latest firmware version!
 
 ## Wireless dongle
 
-The new Xbox Wireless Dongle (`045e:02fe`) runs on the kernel's `mt76x2u` driver and Mediatek's firmware from
-`linux-firmware`, through the `xone_mtnet` module. No firmware from Microsoft is needed. `make install` sets this up,
-and the dongle is ready once it's replugged.
+The Xbox Wireless Dongles, old (`045e:02e6`) and new (`045e:02fe`), run on the kernel's `mt76x2u` driver and
+Mediatek's firmware from `linux-firmware`, through the `xone_mtnet` module. No firmware from Microsoft is needed.
+`make install` sets this up, and the dongle is ready once it's replugged.
 
-The old dongle (`045e:02e6`) and the built-in dongles (`045e:02f9` and `045e:091e`) don't run on `mt76x2u`, so they
-use the `xone_dongle` module and Microsoft's firmware (see *Dongles that need Microsoft's firmware*).
+The built-in dongles (`045e:02f9` and `045e:091e`) don't run on `mt76x2u`, so they use the `xone_dongle` module and
+Microsoft's firmware (see *Dongles that need Microsoft's firmware*).
 
 The dongle's button and LED work as usual: press the button to start pairing, and the LED blinks while pairing, stays
 on while a controller is connected, and is off otherwise.
@@ -121,7 +121,7 @@ redistributed, so it's downloaded from Microsoft, under Microsoft's Terms of Use
 sudo ./install/firmware.sh
 ```
 
-The new dongle (`045e:02fe`) always uses `xone_mtnet`; `xone_dongle` no longer claims it.
+The old and new dongles (`045e:02e6` and `045e:02fe`) always use `xone_mtnet`; `xone_dongle` no longer claims them.
 
 > [!TIP]
 > The `xone-dongle.fw_override=0x0000` module paramter can be used to load a different firmware file than the one selected automatically by the driver. The value is the USB PID contained in the fw file eg. `xone_dongle_02e6.bin`

@@ -88,6 +88,18 @@
 #define MTNET_REG_BBP_AGC0 0x2300
 #define MTNET_REG_BBP_TXBE5 (0x2700 + (5 << 2))
 
+/*
+ * The hardware acknowledges frames sent to the address in MT_MAC_ADDR, and
+ * recognizes acknowledgements to it. mac80211 doesn't program it for a monitor
+ * interface, so it keeps whatever address it last had - such as a random one
+ * NetworkManager set for a scan - and then every frame to or from a controller
+ * goes unacknowledged. Bits 31:16 of the second words aren't address bits.
+ */
+#define MTNET_REG_MAC_ADDR_DW0 0x1008
+#define MTNET_REG_MAC_ADDR_DW1 0x100c
+#define MTNET_REG_MAC_BSSID_DW0 0x1010
+#define MTNET_REG_MAC_BSSID_DW1 0x1014
+
 /* The LED is active low on pin 2 of the MT_LED registers */
 #define MTNET_LED_PIN 2
 #define MTNET_REG_LED_CTRL 0x0770
@@ -126,6 +138,8 @@ MODULE_PARM_DESC(pairing, "Announce pairing mode in the beacon, for up to 60 sec
 /* How long a powered-off controller gets to go quiet before the system sleeps */
 #define MTNET_PWR_OFF_TIMEOUT_MS 5000
 #define MTNET_PWR_OFF_QUIET_MS 1000
+/* How long a suspend waits for the re-probe after the previous resume */
+#define MTNET_REPROBE_WAIT_MS 10000
 
 /* Both can be changed at any time; idle time doesn't build up while turned off */
 static bool idle_poweroff = true;
@@ -198,6 +212,8 @@ static struct {
 	u8 cmd_ep;
 	bool wow_armed;
 	u32 saved_rx_filter;
+	/* Set while the re-probe queued at resume hasn't brought the transport back */
+	bool reprobing;
 } mtnet;
 
 static void mtnet_xmit(struct sk_buff *skb)
@@ -950,6 +966,29 @@ static void mtnet_set_single_chain(void)
 	mtnet_reg_rmw(MTNET_REG_TX_PIN_CFG, MTNET_TX_PIN_TXANT, 0x3);
 }
 
+static void mtnet_set_hw_address(void)
+{
+	const u8 *addr = mtnet.ndev->dev_addr;
+	u32 dw0 = get_unaligned_le32(addr);
+	u32 dw1 = get_unaligned_le16(addr + 4);
+	u32 val;
+
+	/* mt76x2u can rewrite these when it reconfigures, so this runs repeatedly */
+	if (mtnet_reg_read(MTNET_REG_MAC_ADDR_DW0, &val) || val != dw0 ||
+	    mtnet_reg_read(MTNET_REG_MAC_ADDR_DW1, &val) || (val & 0xffff) != dw1) {
+		netdev_dbg(mtnet.ndev, "setting the hardware address to %pM\n", addr);
+		if (mtnet_reg_write(MTNET_REG_MAC_ADDR_DW0, dw0) ||
+		    mtnet_reg_rmw(MTNET_REG_MAC_ADDR_DW1, 0xffff, dw1))
+			return;
+	}
+	if (mtnet_reg_read(MTNET_REG_MAC_BSSID_DW0, &val) || val != dw0 ||
+	    mtnet_reg_read(MTNET_REG_MAC_BSSID_DW1, &val) || (val & 0xffff) != dw1) {
+		if (mtnet_reg_write(MTNET_REG_MAC_BSSID_DW0, dw0))
+			return;
+		mtnet_reg_rmw(MTNET_REG_MAC_BSSID_DW1, 0xffff, dw1);
+	}
+}
+
 static void mtnet_set_led(enum mtnet_led led)
 {
 	u32 status;
@@ -1004,6 +1043,7 @@ static void mtnet_button(struct work_struct *work)
 	}
 	mtnet_set_led(led);
 	mtnet_set_single_chain();
+	mtnet_set_hw_address();
 
 	queue_delayed_work(mtnet.wq, &mtnet.button_work, msecs_to_jiffies(MTNET_BUTTON_MS));
 }
@@ -1562,8 +1602,30 @@ static void mtnet_reprobe_after_resume(struct usb_interface *intf)
 	if (!READ_ONCE(mtnet.running))
 		return;
 	mtnet_release_rom_semaphore();
+	WRITE_ONCE(mtnet.reprobing, true);
 	usb_queue_reset_device(intf);
 	netdev_info(mtnet.ndev, "resumed, re-probing the dongle\n");
+}
+
+/*
+ * A suspend that starts while that re-probe is still resetting the dongle and
+ * probing mt76x2u hangs the system on the next resume (seen on Intel and
+ * Snapdragon hosts, e.g. when systemd retries a failed suspend at once). Wait
+ * for the transport to come back first. This runs before anything is frozen, so
+ * udev can still put the new interface into monitor mode.
+ */
+static void mtnet_wait_for_reprobe(void)
+{
+	unsigned long deadline = jiffies + msecs_to_jiffies(MTNET_REPROBE_WAIT_MS);
+
+	if (!READ_ONCE(mtnet.reprobing))
+		return;
+	while (READ_ONCE(mtnet.reprobing) && time_before(jiffies, deadline))
+		msleep(50);
+	if (READ_ONCE(mtnet.reprobing)) {
+		pr_info("xone_mtnet: the dongle didn't come back after the last resume\n");
+		WRITE_ONCE(mtnet.reprobing, false);
+	}
 }
 
 /* Runs on the ordered mtnet.wq, which is the only place clients are freed */
@@ -1608,6 +1670,7 @@ static int mtnet_pm_notify(struct notifier_block *nb, unsigned long action, void
 
 	if (action != PM_SUSPEND_PREPARE && action != PM_HIBERNATION_PREPARE)
 		return NOTIFY_DONE;
+	mtnet_wait_for_reprobe();
 	if (!READ_ONCE(mtnet.running) || !mtnet_clients_awake())
 		return NOTIFY_DONE;
 
@@ -1721,6 +1784,7 @@ static void mtnet_start(struct net_device *dev)
 	mtnet.wow_armed = false;
 	mtnet.ptype.dev = dev;
 	WRITE_ONCE(mtnet.running, true);
+	WRITE_ONCE(mtnet.reprobing, false);
 	mtnet_wrap_resume(to_usb_interface(dev->dev.parent));
 	dev_add_pack(&mtnet.ptype);
 	/* Start on a slot boundary, so slot times are whole multiples of 100 TU */

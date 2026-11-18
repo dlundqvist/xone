@@ -28,6 +28,7 @@ done
 
 rm -rf /usr/src/xone* || true
 rm -rf /etc/modprobe.d/xone-blacklist.conf || true
+rm -f /etc/udev/rules.d/70-xone-mtnet.rules /usr/libexec/xone-mtnet-setup || true
 rm -rf /var/lib/dkms/xone* || true
 echo -e "All xone versions removed\n"
 

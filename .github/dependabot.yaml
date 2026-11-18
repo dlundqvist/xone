@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "semiannually"
+    cooldown:
+      default-days: 20
+    groups:
+      github-actions:
+        patterns:
+          - "*"

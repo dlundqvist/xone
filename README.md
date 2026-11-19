@@ -39,6 +39,7 @@ Always update your Xbox devices to the latest firmware version!
 ## Features
 
 - [x] Input and force feedback (rumble)
+- [x] Rumble can be turned off globally (`disable_rumble`)
 - [x] Battery reporting (`UPower` integration)
 - [x] LED control (using `/sys/class/leds`)
 - [x] Audio capture/playback (through `ALSA`)
@@ -248,6 +249,18 @@ sudo tee /sys/bus/usb/drivers/xone-dongle/*/poweroff <<< 1
 # power off all connected clients
 sudo tee /sys/bus/usb/drivers/xone-dongle/*/poweroff <<< -1
 ```
+
+### Disable rumble/vibration ###
+
+You can globally disable rumble/vibration with module parameter `disable_rumble` `0|1`. Default is `0`.
+
+Add line `options xone_gip_gamepad disable_rumble=1` to your modprobe.d folder configuration files.
+
+or
+
+Add `xone_gip_gamepad.disable_rumble=1` to your GRUB command-line parameter.
+
+Reload the module or reboot if you changed the GRUB parameter. You can check if the feature is on/off by running `cat /sys/module/xone_gip_gamepad/parameters/disable_rumble`.
 
 ## Troubleshooting
 

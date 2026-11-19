@@ -260,7 +260,12 @@ or
 
 Add `xone_gip_gamepad.disable_rumble=1` to your GRUB command-line parameter.
 
-Reload the module or reboot if you changed the GRUB parameter. You can check if the feature is on/off by running `cat /sys/module/xone_gip_gamepad/parameters/disable_rumble`.
+Reload the module or reboot if you changed the GRUB parameter.
+
+```
+# You can check if the feature is on/off
+cat /sys/module/xone_gip_gamepad/parameters/disable_rumble
+```
 
 ## Troubleshooting
 

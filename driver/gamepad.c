@@ -11,6 +11,13 @@
 #include "common.h"
 #include "../auth/auth.h"
 
+/*
+ * Parameter to disable rumble/vibration.
+ */
+static bool disable_rumble = false;
+module_param(disable_rumble, bool, 0444);
+MODULE_PARM_DESC(disable_rumble, "Disable gamepad rumble.");
+
 #define GIP_GP_NAME "Microsoft Xbox Controller"
 
 #define GIP_VENDOR_MICROSOFT 0x045e
@@ -209,6 +216,13 @@ static int gip_gamepad_init_rumble(struct gip_gamepad *gamepad)
 	rumble->pkt.repeat = 0xeb;
 	rumble->parent = gamepad;
 	gip_gamepad_send_rumble(&rumble->timer);
+
+	// Return if rumble is disabled.
+	if (disable_rumble) {
+		dev_info(&gamepad->client->dev,
+			 "Rumble is disabled.\n");
+		return 0;
+	}
 
 	input_set_capability(dev, EV_FF, FF_RUMBLE);
 	input_set_drvdata(dev, rumble);

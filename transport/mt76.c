@@ -970,6 +970,51 @@ static u16 xone_mt76_get_chip_id(struct xone_mt76 *mt)
 	return (id[1] << 8) | id[2];
 }
 
+/* WCID 0 is unused, clients use 1..16 */
+#define XONE_MT_NUM_WCID 17
+
+/*
+ * The WCID attribute/IV/key tables and the shared key tables live in chip
+ * SRAM that is never cleared by the firmware. After a power cycle they hold
+ * random data, so a WCID handed to a new client can already have a pairwise
+ * cipher configured. The hardware then tries to decrypt the controller's
+ * plaintext GIP announce with a garbage key and drops it: the controller
+ * associates, its light goes solid, and nothing else happens. Mainline
+ * mt76x2u clears these tables in mt76x2u_init_hardware(); do the same.
+ */
+static void xone_mt76_clear_range(struct xone_mt76 *mt, u32 start, u32 len)
+{
+	u32 addr;
+
+	for (addr = start; addr < start + len; addr += 4)
+		xone_mt76_write_register(mt, addr, 0);
+}
+
+/*
+ * Plain register writes are used on purpose: MCU burst writes to these
+ * tables were observed not to take effect on this firmware.
+ */
+static int xone_mt76_clear_keys(struct xone_mt76 *mt)
+{
+	int i;
+
+	for (i = 0; i < XONE_MT_NUM_WCID; i++) {
+		xone_mt76_clear_range(mt, MT_WCID_ATTR(i), 4);
+		xone_mt76_clear_range(mt, MT_WCID_IV(i), 8);
+		xone_mt76_clear_range(mt, MT_WCID_KEY(i), 32);
+	}
+
+	/* shared keys: 8 BSS x 4 key indices x 32 bytes per bank */
+	xone_mt76_clear_range(mt, MT_SKEY_BASE_0, 8 * 4 * 32);
+	xone_mt76_clear_range(mt, MT_SKEY_BASE_1, 8 * 4 * 32);
+
+	/* shared key modes: 2 BSS per register, 8 BSS per bank */
+	xone_mt76_clear_range(mt, MT_SKEY_MODE_BASE_0, 4 * 4);
+	xone_mt76_clear_range(mt, MT_SKEY_MODE_BASE_1, 4 * 4);
+
+	return 0;
+}
+
 int xone_mt76_init_radio(struct xone_mt76 *mt)
 {
 	int err;
@@ -990,6 +1035,10 @@ int xone_mt76_init_radio(struct xone_mt76 *mt)
 		return err;
 
 	xone_mt76_init_registers(mt);
+
+	err = xone_mt76_clear_keys(mt);
+	if (err)
+		return err;
 
 	err = xone_mt76_calibrate_crystal(mt);
 	if (err)

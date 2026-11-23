@@ -990,6 +990,14 @@ static void xone_mt76_clear_range(struct xone_mt76 *mt, u32 start, u32 len)
 		xone_mt76_write_register(mt, addr, 0);
 }
 
+/* drop any cipher/key left in a WCID slot by a previous client */
+static void xone_mt76_clear_wcid(struct xone_mt76 *mt, u8 wcid)
+{
+	xone_mt76_clear_range(mt, MT_WCID_ATTR(wcid), 4);
+	xone_mt76_clear_range(mt, MT_WCID_IV(wcid), 8);
+	xone_mt76_clear_range(mt, MT_WCID_KEY(wcid), 32);
+}
+
 /*
  * Plain register writes are used on purpose: MCU burst writes to these
  * tables were observed not to take effect on this firmware.
@@ -999,9 +1007,7 @@ static int xone_mt76_clear_keys(struct xone_mt76 *mt)
 	int i;
 
 	for (i = 0; i < XONE_MT_NUM_WCID; i++) {
-		xone_mt76_clear_range(mt, MT_WCID_ATTR(i), 4);
-		xone_mt76_clear_range(mt, MT_WCID_IV(i), 8);
-		xone_mt76_clear_range(mt, MT_WCID_KEY(i), 32);
+		xone_mt76_clear_wcid(mt, i);
 	}
 
 	/* shared keys: 8 BSS x 4 key indices x 32 bytes per bank */
@@ -1257,6 +1263,14 @@ int xone_mt76_associate_client(struct xone_mt76 *mt, u8 wcid, u8 *addr)
 		       sizeof(mgmt.u.assoc_resp);
 	int err;
 
+	/*
+	 * The slot may still hold the pairwise key of the previous client that
+	 * used it (see xone_mt76_remove_client()). The hardware would then try
+	 * to decrypt this controller's plaintext GIP announce with that key and
+	 * drop it, so the handshake never starts.
+	 */
+	xone_mt76_clear_wcid(mt, wcid);
+
 	skb = xone_mt76_alloc_message(sizeof(struct mt76_txwi) + mgmt_len + 8,
 				      GFP_KERNEL);
 	if (!skb)
@@ -1363,9 +1377,6 @@ int xone_mt76_remove_client(struct xone_mt76 *mt, u8 wcid)
 {
 	u8 data[] = { wcid - 1, 0x00, 0x00, 0x00 };
 	u8 addr[ETH_ALEN] = {};
-	u8 iv[8] = {};
-	u32 attr = 0;
-	u8 key[XONE_MT_WCID_KEY_LEN] = {};
 	int err;
 
 	err = xone_mt76_send_ms_command(mt, XONE_MT_REMOVE_CLIENT,
@@ -1377,14 +1388,12 @@ int xone_mt76_remove_client(struct xone_mt76 *mt, u8 wcid)
 	if (err)
 		return err;
 
-	err = xone_mt76_write_burst(mt, MT_WCID_IV(wcid), iv, sizeof(iv));
-	if (err)
-		return err;
+	/*
+	 * Clear the cipher and key with plain register writes: MCU burst
+	 * writes of zeros to these tables were observed not to take effect,
+	 * which left the old key in place for the next client.
+	 */
+	xone_mt76_clear_wcid(mt, wcid);
 
-	err = xone_mt76_write_burst(mt, MT_WCID_ATTR(wcid),
-				    &attr, sizeof(attr));
-	if (err)
-		return err;
-
-	return xone_mt76_write_burst(mt, MT_WCID_KEY(wcid), key, sizeof(key));
+	return 0;
 }

@@ -31,6 +31,8 @@ module_param_named(fw_override, fw_override_pid, ushort, 0600);
 #define XONE_DONGLE_MAX_CLIENTS 16
 
 #define XONE_DONGLE_PAIRING_TIMEOUT 60 // seconds
+/* a client that hasn't sent any GIP data by now is considered dead */
+#define XONE_DONGLE_HANDSHAKE_TIMEOUT msecs_to_jiffies(30000)
 #define XONE_DONGLE_PAIR_SCAN_INTERVAL msecs_to_jiffies(2000)
 #define XONE_DONGLE_PWR_OFF_TIMEOUT msecs_to_jiffies(5000)
 #define XONE_DONGLE_FW_REQ_TIMEOUT_MS 3000
@@ -64,6 +66,9 @@ struct xone_dongle_client {
 	u8 wcid;
 	u8 address[ETH_ALEN];
 	bool encryption_enabled;
+	unsigned long associated_at;
+	/* any GIP data received, i.e. the handshake has started */
+	bool gip_started;
 
 	struct gip_adapter *adapter;
 };
@@ -98,6 +103,7 @@ struct xone_dongle {
 	struct mutex pairing_lock;
 	struct delayed_work pairing_work;
 	struct delayed_work pairing_scan_work;
+	struct delayed_work handshake_work;
 	bool pairing;
 	unsigned long last_wlan_rx;
 	u8 pairing_scan_idx;
@@ -519,6 +525,111 @@ xone_dongle_create_client(struct xone_dongle *dongle, u8 *addr)
 	return client;
 }
 
+/* tear down a client that has already been taken out of the clients array */
+static int xone_dongle_free_client(struct xone_dongle *dongle,
+				   struct xone_dongle_client *client)
+{
+	u8 wcid = client->wcid;
+	int err;
+
+	gip_destroy_adapter(client->adapter);
+	kfree(client);
+
+	err = xone_mt76_remove_client(&dongle->mt, wcid);
+	if (err)
+		dev_err(dongle->mt.dev, "%s: remove failed: %d\n", __func__,
+			err);
+
+	/* turn off LED if all clients have disconnected */
+	if (atomic_dec_and_test(&dongle->client_count) && !dongle->pairing)
+		err = xone_mt76_set_led_mode(&dongle->mt, XONE_MT_LED_OFF);
+
+	wake_up(&dongle->disconnect_wait);
+	return err;
+}
+
+/*
+ * A controller can associate and then never start the GIP handshake (e.g.
+ * the channel changed under it, or the dongle dropped its frames). Nothing
+ * ever removes such a half-open client: its slot stays occupied, which also
+ * freezes the pairing channel scan, so the controller can neither reconnect
+ * nor re-pair until the dongle is replugged. Drop clients that haven't sent
+ * any GIP data within the timeout; the controller then associates again from
+ * scratch.
+ *
+ * Only clients without any GIP data are dropped: encryption is not a usable
+ * completion signal (some devices skip authentication on purpose), and a
+ * client whose handshake has started already has GIP state (a gip_client,
+ * authentication work) that must not be torn down from here. The check and
+ * the removal from the clients array happen under clients_lock, the same
+ * lock the RX path holds while it hands data to the client, so no data can
+ * reach a client after it has been picked for removal.
+ *
+ * This runs on the ordered event_wq, so it is serialized with the events
+ * that add and remove clients.
+ *
+ * Every path that stops the dongle must stop the producers of events (IN
+ * URBs, load_fw_work), flush event_wq and only then cancel this work, so
+ * that nothing can arm it again afterwards.
+ */
+static void xone_dongle_handshake_check(struct work_struct *work)
+{
+	struct xone_dongle *dongle = container_of(
+		to_delayed_work(work), typeof(*dongle), handshake_work);
+	struct xone_dongle_client *client;
+	unsigned long deadline, flags, next = 0, now = jiffies;
+	bool has_next = false;
+	int i;
+
+	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
+		return;
+
+	for (i = 0; i < XONE_DONGLE_MAX_CLIENTS; i++) {
+		spin_lock_irqsave(&dongle->clients_lock, flags);
+
+		client = dongle->clients[i];
+		if (!client || client->gip_started) {
+			spin_unlock_irqrestore(&dongle->clients_lock, flags);
+			continue;
+		}
+
+		deadline =
+			client->associated_at + XONE_DONGLE_HANDSHAKE_TIMEOUT;
+		if (time_before(now, deadline)) {
+			spin_unlock_irqrestore(&dongle->clients_lock, flags);
+			if (!has_next || time_before(deadline, next)) {
+				next = deadline;
+				has_next = true;
+			}
+			continue;
+		}
+
+		dongle->clients[i] = NULL;
+		spin_unlock_irqrestore(&dongle->clients_lock, flags);
+
+		dev_warn(
+			dongle->mt.dev,
+			"%s: wcid=%d never started the handshake, dropping it\n",
+			__func__, client->wcid);
+		xone_dongle_free_client(dongle, client);
+	}
+
+	if (!has_next)
+		return;
+
+	/* removing clients can sleep, so look at the clock again */
+	now = jiffies;
+	queue_delayed_work(dongle->event_wq, &dongle->handshake_work,
+			   time_after(next, now) ? next - now : 0);
+}
+
+/* look at the clients again once the dongle is running after a stop */
+static void xone_dongle_restart_handshake_check(struct xone_dongle *dongle)
+{
+	if (atomic_read(&dongle->client_count) > 0)
+		mod_delayed_work(dongle->event_wq, &dongle->handshake_work, 0);
+}
+
 static int xone_dongle_add_client(struct xone_dongle *dongle, u8 *addr)
 {
 	struct xone_dongle_client *client;
@@ -548,11 +659,21 @@ static int xone_dongle_add_client(struct xone_dongle *dongle, u8 *addr)
 	dev_dbg(dongle->mt.dev, "%s: wcid=%d, address=%pM\n",
 		__func__, client->wcid, addr);
 
+	client->associated_at = jiffies;
+
 	spin_lock_irqsave(&dongle->clients_lock, flags);
 	dongle->clients[client->wcid - 1] = client;
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 
 	atomic_inc(&dongle->client_count);
+
+	/*
+	 * Don't move a check that is already pending: it belongs to an older
+	 * client with an earlier deadline, and it reschedules itself for the
+	 * later ones.
+	 */
+	queue_delayed_work(dongle->event_wq, &dongle->handshake_work,
+			   XONE_DONGLE_HANDSHAKE_TIMEOUT);
 
 	return 0;
 
@@ -566,7 +687,6 @@ err_free_client:
 static int xone_dongle_remove_client(struct xone_dongle *dongle, u8 wcid)
 {
 	struct xone_dongle_client *client;
-	int err;
 	unsigned long flags;
 
 	client = dongle->clients[wcid - 1];
@@ -580,20 +700,7 @@ static int xone_dongle_remove_client(struct xone_dongle *dongle, u8 wcid)
 	dongle->clients[wcid - 1] = NULL;
 	spin_unlock_irqrestore(&dongle->clients_lock, flags);
 
-	gip_destroy_adapter(client->adapter);
-	kfree(client);
-
-	err = xone_mt76_remove_client(&dongle->mt, wcid);
-	if (err)
-		dev_err(dongle->mt.dev, "%s: remove failed: %d\n",
-			__func__, err);
-
-	/* turn off LED if all clients have disconnected */
-	if (atomic_dec_and_test(&dongle->client_count) && !dongle->pairing)
-		err = xone_mt76_set_led_mode(&dongle->mt, XONE_MT_LED_OFF);
-
-	wake_up(&dongle->disconnect_wait);
-	return err;
+	return xone_dongle_free_client(dongle, client);
 }
 
 static int xone_dongle_pair_client(struct xone_dongle *dongle, u8 *addr)
@@ -716,6 +823,7 @@ static int xone_dongle_handle_qos_data(struct xone_dongle *dongle,
 		 */
 		if (dongle->pairing)
 			dongle->last_wlan_rx = jiffies;
+		client->gip_started = true;
 		err = gip_process_buffer(client->adapter, skb->data, skb->len);
 	}
 
@@ -1203,6 +1311,8 @@ static void xone_dongle_fw_load(struct work_struct *work)
 	if (err)
 		dev_err(mt->dev, "%s: enable pairing failed: %d\n",
 			__func__, err);
+
+	xone_dongle_restart_handshake_check(dongle);
 }
 
 static int xone_dongle_init(struct xone_dongle *dongle)
@@ -1268,6 +1378,11 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	/* cancel fw load before destroying workqueues to avoid use-after-free */
 	cancel_work_sync(&dongle->load_fw_work);
+	/* fw load may have submitted new IN URBs before it was cancelled */
+	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	/* let pending events (which can arm the check) finish, then cancel it */
+	flush_workqueue(dongle->event_wq);
+	cancel_delayed_work_sync(&dongle->handshake_work);
 	destroy_workqueue(dongle->event_wq);
 	cancel_delayed_work_sync(&dongle->pairing_work);
 	cancel_delayed_work_sync(&dongle->pairing_scan_work);
@@ -1319,6 +1434,7 @@ static int xone_dongle_probe(struct usb_interface *intf,
 	mutex_init(&dongle->pairing_lock);
 	INIT_DELAYED_WORK(&dongle->pairing_work, xone_dongle_pairing_timeout);
 	INIT_DELAYED_WORK(&dongle->pairing_scan_work, xone_dongle_pairing_scan);
+	INIT_DELAYED_WORK(&dongle->handshake_work, xone_dongle_handshake_check);
 	INIT_WORK(&dongle->load_fw_work, xone_dongle_fw_load);
 	spin_lock_init(&dongle->clients_lock);
 	init_waitqueue_head(&dongle->disconnect_wait);
@@ -1381,12 +1497,18 @@ static int xone_dongle_suspend(struct usb_interface *intf, pm_message_t message)
 		return 0;
 	}
 
+	/* fw load may still be arming the handshake check and pairing */
+	cancel_work_sync(&dongle->load_fw_work);
+
 	err = xone_dongle_power_off_clients(dongle);
 	if (err)
 		dev_err(dongle->mt.dev, "%s: power off failed: %d\n",
 			__func__, err);
 
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	/* pending events may still need the OUT URBs */
+	flush_workqueue(dongle->event_wq);
+	cancel_delayed_work_sync(&dongle->handshake_work);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
 	cancel_delayed_work_sync(&dongle->pairing_work);
 	cancel_delayed_work_sync(&dongle->pairing_scan_work);
@@ -1417,7 +1539,13 @@ static int xone_dongle_resume(struct usb_interface *intf)
 	}
 
 	msleep(1000);
-	return xone_mt76_resume_radio(&dongle->mt);
+	err = xone_mt76_resume_radio(&dongle->mt);
+	if (err)
+		return err;
+
+	xone_dongle_restart_handshake_check(dongle);
+
+	return 0;
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
@@ -1457,9 +1585,13 @@ static int xone_dongle_pre_reset(struct usb_interface *intf)
 	if (dongle->fw_state != XONE_DONGLE_FW_STATE_READY)
 		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
 
+	/* fw load arms the handshake check and pairing when it finishes */
+	cancel_work_sync(&dongle->load_fw_work);
+	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	flush_workqueue(dongle->event_wq);
+	cancel_delayed_work_sync(&dongle->handshake_work);
 	cancel_delayed_work_sync(&dongle->pairing_work);
 	cancel_delayed_work_sync(&dongle->pairing_scan_work);
-	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
 	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
 
 	while ((urb = usb_get_from_anchor(&dongle->urbs_out_idle)))
@@ -1517,6 +1649,13 @@ static int xone_dongle_reset_resume(struct usb_interface *intf)
 	 * new URBs before cancel_work_sync returned, kill them now.
 	 */
 	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
+	/*
+	 * Cancel the handshake check before draining: its timer can't queue
+	 * work on a draining workqueue, and it must not remove a client while
+	 * the loop below destroys them.
+	 */
+	flush_workqueue(dongle->event_wq);
+	cancel_delayed_work_sync(&dongle->handshake_work);
 	drain_workqueue(dongle->event_wq);
 	cancel_delayed_work_sync(&dongle->pairing_work);
 	cancel_delayed_work_sync(&dongle->pairing_scan_work);

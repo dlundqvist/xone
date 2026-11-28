@@ -979,6 +979,21 @@ static int xone_dongle_process_buffer(struct xone_dongle *dongle,
 	return err;
 }
 
+/*
+ * An IN URB that sits on urbs_in_busy without being in flight can never be
+ * removed by usb_kill_anchored_urbs(): usb_kill_urb() returns immediately and
+ * leaves it anchored, so disconnect spins forever in hub_event (all other USB
+ * opens then block in D state and shutdown hangs). Every path that anchors to
+ * busy and then fails to submit must move the URB back to idle.
+ */
+static void xone_dongle_park_urb_in(struct xone_dongle *dongle, struct urb *urb)
+{
+	usb_get_urb(urb);
+	usb_unanchor_urb(urb);
+	usb_anchor_urb(urb, &dongle->urbs_in_idle);
+	usb_put_urb(urb);
+}
+
 static void xone_dongle_complete_in(struct urb *urb)
 {
 	struct xone_dongle *dongle = urb->context;
@@ -1003,14 +1018,19 @@ static void xone_dongle_complete_in(struct urb *urb)
 			__func__, err);
 
 resubmit:
+	/*
+	 * Anchor before submitting: anchoring after a successful submit races
+	 * with the URB completing on another CPU, which can leave a finished
+	 * URB on urbs_in_busy.
+	 */
+	usb_anchor_urb(urb, &dongle->urbs_in_busy);
+
 	/* can fail during USB device removal */
 	err = usb_submit_urb(urb, GFP_ATOMIC);
 	if (err) {
 		dev_dbg(dongle->mt.dev, "%s: submit failed: %d\n",
 			__func__, err);
-		usb_anchor_urb(urb, &dongle->urbs_in_idle);
-	} else {
-		usb_anchor_urb(urb, &dongle->urbs_in_busy);
+		xone_dongle_park_urb_in(dongle, urb);
 	}
 }
 
@@ -1036,20 +1056,29 @@ static int xone_dongle_init_urbs_in(struct xone_dongle *dongle,
 		if (!urb)
 			return -ENOMEM;
 
-		usb_anchor_urb(urb, &dongle->urbs_in_busy);
-		usb_free_urb(urb);
-
 		buf = usb_alloc_coherent(mt->udev, buf_len,
 					 GFP_KERNEL, &urb->transfer_dma);
-		if (!buf)
+		if (!buf) {
+			usb_free_urb(urb);
 			return -ENOMEM;
+		}
 
 		usb_fill_bulk_urb(urb, mt->udev,
 				  usb_rcvbulkpipe(mt->udev, ep), buf, buf_len,
 				  xone_dongle_complete_in, dongle);
 		urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
+		/*
+		 * Only anchor a fully set up URB, right before submitting it
+		 * (see xone_dongle_complete_in()). Keep our reference until
+		 * the URB is either in flight or back on the idle anchor.
+		 */
+		usb_anchor_urb(urb, &dongle->urbs_in_busy);
 		err = usb_submit_urb(urb, GFP_KERNEL);
+		if (err)
+			xone_dongle_park_urb_in(dongle, urb);
+
+		usb_free_urb(urb);
 		if (err)
 			return err;
 	}
@@ -1265,9 +1294,18 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 		dongle->fw_state = XONE_DONGLE_FW_STATE_STOP_LOADING;
 	}
 
-	usb_kill_anchored_urbs(&dongle->urbs_in_busy);
-	/* cancel fw load before destroying workqueues to avoid use-after-free */
+	/*
+	 * Cancel fw load first: it is the only other code that anchors IN
+	 * URBs, and it would race with draining the busy anchor below. This
+	 * also keeps it from using the workqueue after it is destroyed.
+	 */
 	cancel_work_sync(&dongle->load_fw_work);
+	/*
+	 * Poison instead of kill: the device is going away for good, so make
+	 * sure no completion handler can resubmit a URB back onto the busy
+	 * anchor while we are draining it.
+	 */
+	usb_poison_anchored_urbs(&dongle->urbs_in_busy);
 	destroy_workqueue(dongle->event_wq);
 	cancel_delayed_work_sync(&dongle->pairing_work);
 	cancel_delayed_work_sync(&dongle->pairing_scan_work);
@@ -1282,7 +1320,7 @@ static void xone_dongle_destroy(struct xone_dongle *dongle)
 		dongle->clients[i] = NULL;
 	}
 
-	usb_kill_anchored_urbs(&dongle->urbs_out_busy);
+	usb_poison_anchored_urbs(&dongle->urbs_out_busy);
 
 	while ((urb = usb_get_from_anchor(&dongle->urbs_out_idle)))
 		usb_free_urb(urb);
@@ -1409,9 +1447,11 @@ static int xone_dongle_resume(struct usb_interface *intf)
 
 	while ((urb = usb_get_from_anchor(&dongle->urbs_in_idle))) {
 		usb_anchor_urb(urb, &dongle->urbs_in_busy);
-		usb_free_urb(urb);
-
 		err = usb_submit_urb(urb, GFP_KERNEL);
+		if (err)
+			xone_dongle_park_urb_in(dongle, urb);
+
+		usb_free_urb(urb);
 		if (err)
 			return err;
 	}
